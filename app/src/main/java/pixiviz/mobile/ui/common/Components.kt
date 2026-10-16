@@ -118,12 +118,19 @@ private fun BlockedPlaceholder(modifier: Modifier) {
 internal fun downscaleToSquare(raw: String): String {
     val match = DATE_PATH.find(raw) ?: return raw
     val datePath = match.groupValues[1]
-    val stem = match.groupValues[2].substringBeforeLast('.').substringBeforeLast('_')
+    val base = match.groupValues[2].substringBeforeLast('.')
+    val stem = base.replace(SIZE_SUFFIX, "")
     if (stem.isBlank()) return raw
     return "https://i.pximg.net/c/240x240/img-master/img/$datePath/${stem}_square1200.jpg"
 }
 
-private val DATE_PATH = Regex("(\\d{4}/\\d{2}/\\d{2}/\\d{2}/\\d{2}/\\d{2})/([^/]+)$")
+private val DATE_PATH = Regex("([0-9]{4}/[0-9]{2}/[0-9]{2}/[0-9]{2}/[0-9]{2}/[0-9]{2})/([^/]+)$")
+
+/**
+ * Only the trailing size marker is stripped. Trimming at the last underscore instead would
+ * turn `<id>_p2.jpg` into `<id>`, i.e. page 0 of a different work.
+ */
+private val SIZE_SUFFIX = Regex("_(master|square)[0-9]+$")
 
 @Composable
 fun ShimmerBox(modifier: Modifier = Modifier, shape: RoundedCornerShape = RoundedCornerShape(18.dp)) {
