@@ -110,6 +110,15 @@ fun RankScreen(onOpenIllust: (Long) -> Unit) {
                     )
                 }
 
+                if (!signedIn) {
+                    Text(
+                        text = "未登录时榜单用「热门标签 + 按热度排序」近似；登录后才是 pixiv 官方榜单。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                }
+
                 if (!adultVisible) {
                     Text(
                         text = if (!signedIn) {

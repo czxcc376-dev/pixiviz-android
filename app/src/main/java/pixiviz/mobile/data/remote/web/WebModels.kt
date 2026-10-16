@@ -159,10 +159,18 @@ data class WebUserWorksBody(
     val manga: Map<String, WebWork> = emptyMap(),
 )
 
+/**
+ * `/ajax/search/suggestion` groups tags by medium and keeps translations in a separate map,
+ * and its `ids` arrays mix numbers and strings - so `ids` is left undeclared and ignored.
+ */
+@Serializable
+data class WebSuggestTag(val tag: String = "")
+
 @Serializable
 data class WebSuggestBody(
-    val popularTags: List<WebTag> = emptyList(),
-    val recommendTags: List<WebTag> = emptyList(),
+    val popularTags: Map<String, List<WebSuggestTag>> = emptyMap(),
+    val recommendTags: Map<String, List<WebSuggestTag>> = emptyMap(),
+    val tagTranslation: Map<String, String> = emptyMap(),
 )
 
 // ---------------------------------------------------------------------------
@@ -250,6 +258,8 @@ internal fun WebUserBody.toUserDetail(): UserDetail = UserDetail(
 )
 
 internal fun WebSuggestBody.toTrendingTags(): List<Pair<String, String?>> =
-    (recommendTags + popularTags)
-        .distinctBy { it.tag }
-        .map { it.tag to it.label().takeIf { label -> label != it.tag } }
+    ((recommendTags["illust"] ?: emptyList()) + (popularTags["illust"] ?: emptyList()))
+        .map { it.tag }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .map { tag -> tag to tagTranslation[tag]?.takeIf { it.isNotBlank() } }

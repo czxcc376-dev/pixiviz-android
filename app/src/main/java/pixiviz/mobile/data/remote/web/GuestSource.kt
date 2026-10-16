@@ -54,15 +54,55 @@ class GuestSource(private val api: WebApi) {
         }
     }
 
+    /**
+     * `ranking.php?format=json` used to answer anonymous clients and now serves the HTML page
+     * instead, so it is attempted once and then abandoned in favour of [popularFallback].
+     */
+    private var rankingJsonUsable = true
+
+    private var cachedTags: List<String> = emptyList()
+
     fun rankLoader(webMode: String): IllustLoader = IllustLoader { next ->
         call {
             val page = next?.toIntOrNull() ?: 1
-            val data = api.ranking(WebUrlsBuilder.ranking(webMode, page))
-            IllustListResponse(
-                illusts = data.contents.map { it.toIllust() },
-                nextUrl = data.next.takeIf { it.isNotBlank() && it != "0" },
-            )
+            if (rankingJsonUsable) {
+                val ranked = runCatching {
+                    api.ranking(WebUrlsBuilder.ranking(webMode, page))
+                }.getOrNull()
+                if (ranked != null && ranked.contents.isNotEmpty()) {
+                    return@call IllustListResponse(
+                        illusts = ranked.contents.map { it.toIllust() },
+                        nextUrl = ranked.next.takeIf { it.isNotBlank() && it != "0" },
+                    )
+                }
+                rankingJsonUsable = false
+            }
+            popularFallback(webMode, page)
         }
+    }
+
+    /**
+     * Guest ranking substitute: a popularity-ordered search over one of pixiv's own popular
+     * tags. Each mode picks a different tag so the tabs stay distinguishable, and paging works
+     * the same way as a real ranking.
+     */
+    private suspend fun popularFallback(webMode: String, page: Int): IllustListResponse {
+        val tags = popularTags()
+        if (tags.isEmpty()) return IllustListResponse()
+        val tag = tags[Math.floorMod(webMode.hashCode(), tags.size)]
+        val group = api.search(WebUrlsBuilder.search(tag, page, order = "popular_d")).body?.illustManga
+        return IllustListResponse(
+            illusts = group?.data.orEmpty().map { it.toIllust() },
+            nextUrl = if (group == null || group.lastPage) null else (page + 1).toString(),
+        )
+    }
+
+    private suspend fun popularTags(): List<String> {
+        if (cachedTags.isNotEmpty()) return cachedTags
+        cachedTags = runCatching {
+            api.suggestions(WebUrlsBuilder.suggestions()).body?.toTrendingTags()?.map { it.first }.orEmpty()
+        }.getOrDefault(emptyList())
+        return cachedTags
     }
 
     fun searchLoader(word: String, mode: String = "all", order: String = "date_d"): IllustLoader =
