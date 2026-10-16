@@ -17,6 +17,12 @@ jobs:
     defaults:
       run:
         working-directory: worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WORKER_ACCESS_KEY: ${{ secrets.WORKER_ACCESS_KEY }}
+      PIXIV_CLIENT_ID: ${{ secrets.PIXIV_CLIENT_ID }}
+      PIXIV_CLIENT_SECRET: ${{ secrets.PIXIV_CLIENT_SECRET }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,22 +43,19 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      # NOTE: the `secrets` context is not available in a step-level `if`,
+      # so presence is checked through `env` instead.
       - name: Sync runtime secrets
-        if: ${{ secrets.WORKER_ACCESS_KEY != '' }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          WORKER_ACCESS_KEY: ${{ secrets.WORKER_ACCESS_KEY }}
-          PIXIV_CLIENT_ID: ${{ secrets.PIXIV_CLIENT_ID }}
-          PIXIV_CLIENT_SECRET: ${{ secrets.PIXIV_CLIENT_SECRET }}
+        if: env.WORKER_ACCESS_KEY != ''
         run: |
           set -e
           printf '%s' "$WORKER_ACCESS_KEY" | npx wrangler secret put WORKER_ACCESS_KEY
-          if [ -n "$PIXIV_CLIENT_ID" ]; then printf '%s' "$PIXIV_CLIENT_ID" | npx wrangler secret put CLIENT_ID; fi
-          if [ -n "$PIXIV_CLIENT_SECRET" ]; then printf '%s' "$PIXIV_CLIENT_SECRET" | npx wrangler secret put CLIENT_SECRET; fi
+          if [ -n "$PIXIV_CLIENT_ID" ]; then
+            printf '%s' "$PIXIV_CLIENT_ID" | npx wrangler secret put CLIENT_ID
+          fi
+          if [ -n "$PIXIV_CLIENT_SECRET" ]; then
+            printf '%s' "$PIXIV_CLIENT_SECRET" | npx wrangler secret put CLIENT_SECRET
+          fi
 
       - name: Deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy
