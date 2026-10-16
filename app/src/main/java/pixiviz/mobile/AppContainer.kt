@@ -10,6 +10,7 @@ import pixiviz.mobile.data.remote.Network
 import pixiviz.mobile.data.remote.PixivJson
 import pixiviz.mobile.data.remote.PixivRepository
 import pixiviz.mobile.data.remote.RelayConfig
+import pixiviz.mobile.data.remote.hibi.HibiSource
 import pixiviz.mobile.data.remote.web.GuestSource
 import pixiviz.mobile.data.settings.ImageChannel
 import pixiviz.mobile.data.settings.Settings
@@ -38,13 +39,18 @@ class AppContainer(context: Context) {
 
     val guest = GuestSource(webApi)
 
+    /** Reads through the volatile config so changing the relay in Settings takes effect live. */
+    val hibi = HibiSource(appApi) { config.backendUrl }
+
     val auth = AuthRepository(tokenStore, config, httpClient, PixivJson)
 
     val repository = PixivRepository(
         config = config,
         api = appApi,
+        hibi = hibi,
         guest = guest,
         signedIn = { auth.signedIn.value },
+        backendAvailable = { config.backendUrl.isNotBlank() },
     )
 
     private val database = PixivizDatabase.build(appContext)
@@ -52,6 +58,7 @@ class AppContainer(context: Context) {
 
     /** Pushes persisted preferences into the volatile relay config. */
     fun applySettings(settings: Settings) {
+        config.backendUrl = settings.backendUrl.ifBlank { BuildConfig.DEFAULT_BACKEND_URL }
         config.workerUrl = settings.workerUrl.ifBlank { BuildConfig.DEFAULT_WORKER_URL }
         config.appKey = settings.appKey.ifBlank { BuildConfig.DEFAULT_APP_KEY }
         config.imageChannelDirect = settings.imageChannel == ImageChannel.DIRECT

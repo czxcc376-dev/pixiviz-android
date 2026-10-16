@@ -28,6 +28,8 @@ class RelayConfig {
     @Volatile var workerUrl: String = ""
     @Volatile var appKey: String = ""
     @Volatile var accessToken: String? = null
+    /** HibiAPI-compatible relay base. The default source, and it serves R-18. */
+    @Volatile var backendUrl: String = ""
     @Volatile var imageChannelDirect: Boolean = true
 
     fun baseUrl(): String = workerUrl.trimEnd('/')

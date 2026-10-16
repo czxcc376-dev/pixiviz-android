@@ -23,6 +23,8 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK }
 enum class GridLayout { SINGLE, DOUBLE }
 
 data class Settings(
+    /** HibiAPI-compatible relay. This is the default data source, and it serves R-18. */
+    val backendUrl: String = "",
     val workerUrl: String = "",
     val appKey: String = "",
     val nsfwMode: NsfwMode = NsfwMode.BLUR,
@@ -47,6 +49,7 @@ class SettingsStore(context: Context) {
 
     val settings: Flow<Settings> = store.data.map { prefs ->
         Settings(
+            backendUrl = prefs[KEY_BACKEND_URL] ?: "",
             workerUrl = prefs[KEY_WORKER_URL] ?: "",
             appKey = prefs[KEY_APP_KEY] ?: "",
             nsfwMode = prefs[KEY_NSFW_MODE].toEnum<NsfwMode>(NsfwMode.BLUR),
@@ -60,6 +63,7 @@ class SettingsStore(context: Context) {
         )
     }
 
+    suspend fun setBackendUrl(value: String) = store.edit { it[KEY_BACKEND_URL] = value.trim() }
     suspend fun setWorkerUrl(value: String) = store.edit { it[KEY_WORKER_URL] = value.trim() }
     suspend fun setAppKey(value: String) = store.edit { it[KEY_APP_KEY] = value.trim() }
     suspend fun setNsfwMode(value: NsfwMode) = store.edit { it[KEY_NSFW_MODE] = value.name }
@@ -72,6 +76,7 @@ class SettingsStore(context: Context) {
     suspend fun setLastRankMode(value: String) = store.edit { it[KEY_LAST_RANK] = value }
 
     private companion object {
+        val KEY_BACKEND_URL = stringPreferencesKey("backend_url")
         val KEY_WORKER_URL = stringPreferencesKey("worker_url")
         val KEY_APP_KEY = stringPreferencesKey("app_key")
         val KEY_NSFW_MODE = stringPreferencesKey("nsfw_mode")

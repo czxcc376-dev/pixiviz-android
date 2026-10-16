@@ -56,6 +56,7 @@ fun SettingsScreen() {
     var appKey by remember(settings.appKey) { mutableStateOf(settings.appKey) }
     var ageDialog by remember { mutableStateOf<NsfwMode?>(null) }
     var showLogin by remember { mutableStateOf(false) }
+    var backendUrl by remember(settings.backendUrl) { mutableStateOf(settings.backendUrl) }
     var status by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
 
@@ -115,9 +116,9 @@ fun SettingsScreen() {
             Section("账号") {
                 Text(
                     text = if (signedIn) {
-                        "已登录：18+ 内容与个性化推荐可用。"
+                        "已登录：使用你自己的账号直连 pixiv，18+ 与个性化推荐按你的账号设置生效。"
                     } else {
-                        "未登录：推荐、排行榜、搜索、画师与作品详情都可正常浏览，全部直连 pixiv。"
+                        "未登录也能浏览推荐、排行榜、搜索、画师与作品详情；18+ 由下面的数据源提供。"
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -135,7 +136,7 @@ fun SettingsScreen() {
                 }
                 if (!signedIn) {
                     Text(
-                        "18+ 内容需要登录：pixiv 对未登录请求直接返回 403。",
+                        "18+ 内容由数据源提供：默认中转可出，直连网页接口则没有。",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -146,7 +147,7 @@ fun SettingsScreen() {
         item {
             Section("18+ 内容") {
                 Text(
-                    "控制成人向作品如何出现。关闭时会同时隐藏 R18 榜单入口。",
+                    "控制成人向作品如何出现；R18 能否获取取决于「数据源」一节，未登录时需要中转。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -245,6 +246,43 @@ fun SettingsScreen() {
             Section("内容") {
                 ToggleRow("显示 AI 生成作品", settings.showAiWorks) {
                     scope.launch { app.settingsStore.setShowAiWorks(it) }
+                }
+            }
+        }
+
+        item {
+            Section("数据源") {
+                Text(
+                    "默认走 HibiAPI 兼容的中转：无需登录即可出 R18，和原 Pixiviz 用的是同一类后端。" +
+                        "留空则退回 pixiv 公开网页接口（推荐与搜索可用，但没有 R18、榜单为近似结果）。" +
+                        "登录 pixiv 后一律改用你自己的账号直连。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = backendUrl,
+                    onValueChange = { backendUrl = it },
+                    label = { Text("中转地址（HibiAPI 兼容）") },
+                    placeholder = { Text(BuildConfig.DEFAULT_BACKEND_URL) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CapsuleButton(text = "保存数据源", onClick = {
+                        scope.launch {
+                            app.settingsStore.setBackendUrl(backendUrl)
+                            app.applySettings(settings.copy(backendUrl = backendUrl.trim()))
+                            status = "数据源已保存"
+                        }
+                    })
+                    CapsuleButton(text = "恢复默认", selected = false, onClick = {
+                        scope.launch {
+                            app.settingsStore.setBackendUrl("")
+                            app.applySettings(settings.copy(backendUrl = ""))
+                            backendUrl = ""
+                            status = "已恢复默认中转"
+                        }
+                    })
                 }
             }
         }

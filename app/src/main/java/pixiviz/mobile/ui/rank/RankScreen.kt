@@ -40,9 +40,10 @@ fun RankScreen(onOpenIllust: (Long) -> Unit) {
     // Adult ranking modes stay hidden until the age gate has been confirmed and content
     // is not set to be hidden outright.
     val signedIn by app.auth.signedIn.collectAsStateWithLifecycle()
-    // pixiv answers 403 for adult ranking modes without a token, so they only
-    // appear once a session exists.
-    val adultVisible = signedIn && settings.nsfwAgeConfirmed && settings.nsfwMode != NsfwMode.HIDE
+    // Adult modes depend on the active source: a relay serves them without an account,
+    // pixiv's public web endpoints never do.
+    val adultServable = app.repository.adultContentAvailable()
+    val adultVisible = adultServable && settings.nsfwAgeConfirmed && settings.nsfwMode != NsfwMode.HIDE
     val modes = remember(adultVisible) {
         RankModes.all.filter { adultVisible || !it.adult }
     }
@@ -110,7 +111,7 @@ fun RankScreen(onOpenIllust: (Long) -> Unit) {
                     )
                 }
 
-                if (!signedIn) {
+                if (!signedIn && !adultServable) {
                     Text(
                         text = "未登录时榜单用「热门标签 + 按热度排序」近似；登录后才是 pixiv 官方榜单。",
                         style = MaterialTheme.typography.labelSmall,
@@ -121,10 +122,12 @@ fun RankScreen(onOpenIllust: (Long) -> Unit) {
 
                 if (!adultVisible) {
                     Text(
-                        text = if (!signedIn) {
-                            "R18 榜单需要登录 pixiv：未登录请求会被 pixiv 直接拒绝。"
-                        } else {
-                            "R18 榜单已按设置隐藏；在「我的 → 18+ 内容」里开启后会出现。"
+                        text = when {
+                            !adultServable ->
+                                "当前数据源拿不到 R18 榜：在「我的 → 数据源」里填一个中转地址，或登录 pixiv。"
+                            !settings.nsfwAgeConfirmed ->
+                                "R18 榜需要先在「我的 → 18+ 内容」里确认年龄。"
+                            else -> "R18 榜单已按设置隐藏。"
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

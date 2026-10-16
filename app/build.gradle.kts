@@ -40,6 +40,7 @@ android {
         buildConfigField("String", "PIXIV_CLIENT_ID", "\"$pixivClientId\"")
         buildConfigField("String", "PIXIV_CLIENT_SECRET", "\"$pixivClientSecret\"")
         buildConfigField("String", "PIXIV_WEB_BASE", "\"https://www.pixiv.net\"")
+        buildConfigField("String", "DEFAULT_BACKEND_URL", "\"https://hibiapi.cocomi.eu.org/api/pixiv\"")
         buildConfigField("String", "PIXIV_APP_API_BASE", "\"https://app-api.pixiv.net\"")
         buildConfigField("String", "PIXIV_OAUTH_BASE", "\"https://oauth.secure.pixiv.net\"")
     }
