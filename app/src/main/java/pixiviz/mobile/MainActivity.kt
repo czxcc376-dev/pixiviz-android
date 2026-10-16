@@ -4,63 +4,79 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-
-/** Brand seed colour inherited from the original Pixiviz web app. */
-internal val BrandSeed = Color(0xFF8F77B5)
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import pixiviz.mobile.data.settings.Settings
+import pixiviz.mobile.data.settings.ThemeMode
+import pixiviz.mobile.ui.LocalApp
+import pixiviz.mobile.ui.LocalSettings
+import pixiviz.mobile.ui.gate.GateScreen
+import pixiviz.mobile.ui.nav.AppRoot
+import pixiviz.mobile.ui.theme.PixivizTheme
+import pixiviz.mobile.ui.theme.UiThemeMode
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        val splash = installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+
+        val container = (application as PixivizApp).container
+        var ready = false
+        splash.setKeepOnScreenCondition { !ready }
+
         setContent {
-            MaterialTheme(
-                colorScheme = darkColorScheme(
-                    primary = BrandSeed,
-                    background = Color(0xFF0B0B0F),
-                    surface = Color(0xFF0B0B0F),
-                ),
+            val settings by container.settingsStore.settings
+                .collectAsStateWithLifecycle(initialValue = Settings())
+
+            LaunchedEffect(settings) { container.applySettings(settings) }
+            ready = true
+
+            PixivizTheme(
+                mode = settings.themeMode.toUiMode(),
+                pureBlack = settings.pureBlack,
             ) {
-                BootstrapScreen()
+                CompositionLocalProvider(
+                    LocalApp provides container,
+                    LocalSettings provides settings,
+                ) {
+                    Surface(modifier = Modifier.fillMaxSize(), color = Color.Transparent) {
+                        Gate(container)
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun BootstrapScreen() {
-    Surface(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(32.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                text = "Pixiviz",
-                style = MaterialTheme.typography.displaySmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Text(
-                text = "M1 bootstrap build\nnext: sign-in + browsing",
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 16.dp),
-            )
-        }
+private fun Gate(container: AppContainer) {
+    val settings = LocalSettings.current
+    val signedIn by container.auth.signedIn.collectAsStateWithLifecycle()
+    val configured = settings.workerUrl.ifBlank { BuildConfig.DEFAULT_WORKER_URL }.isNotBlank()
+
+    LaunchedEffect(configured, settings.workerUrl, settings.appKey) {
+        if (configured) container.auth.restore()
     }
+
+    when {
+        !configured -> GateScreen()
+        !signedIn -> pixiviz.mobile.ui.login.LoginScreen()
+        else -> AppRoot()
+    }
+}
+
+private fun ThemeMode.toUiMode(): UiThemeMode = when (this) {
+    ThemeMode.SYSTEM -> UiThemeMode.SYSTEM
+    ThemeMode.LIGHT -> UiThemeMode.LIGHT
+    ThemeMode.DARK -> UiThemeMode.DARK
 }

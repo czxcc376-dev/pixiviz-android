@@ -118,8 +118,9 @@ dependencies {
     implementation(libs.retrofit.kotlinx.serialization)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
-    implementation(libs.coil.compose)
-    implementation(libs.coil.network.okhttp)
+    implementation(libs.coil3.main)
+    implementation(libs.coil3.compose)
+    implementation(libs.coil3.okhttp)
 
     implementation(libs.androidx.paging.runtime)
     implementation(libs.androidx.paging.compose)
