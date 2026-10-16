@@ -109,23 +109,21 @@ private fun BlockedPlaceholder(modifier: Modifier) {
     }
 }
 
-/** Rewrites any pixiv image URL to its 240x240 square variant. */
+/**
+ * Rewrites any pixiv image URL to its 240x240 square variant.
+ *
+ * Matching on the `YYYY/MM/DD/HH/MM/SS/file` tail is intentional: `img-original/img/...`
+ * still contains the substring `/img/`, so prefix trimming silently eats a path segment.
+ */
 internal fun downscaleToSquare(raw: String): String {
-    val marker = "/img/"
-    val idx = raw.indexOf(marker)
-    if (idx < 0) return raw
-    val tail = raw.substring(idx + marker.length)
-    val afterHost = when {
-        tail.startsWith("img-master/") -> tail.removePrefix("img-master/")
-        tail.startsWith("img-original/") -> tail.removePrefix("img-original/")
-        else -> tail.substringAfter('/', tail)
-    }
-    val datePath = afterHost.substringBeforeLast('/', "")
-    if (datePath.isEmpty()) return raw
-    val name = afterHost.substringAfterLast('/')
-    val stem = name.substringBeforeLast('.').substringBeforeLast('_')
+    val match = DATE_PATH.find(raw) ?: return raw
+    val datePath = match.groupValues[1]
+    val stem = match.groupValues[2].substringBeforeLast('.').substringBeforeLast('_')
+    if (stem.isBlank()) return raw
     return "https://i.pximg.net/c/240x240/img-master/img/$datePath/${stem}_square1200.jpg"
 }
+
+private val DATE_PATH = Regex("(\\d{4}/\\d{2}/\\d{2}/\\d{2}/\\d{2}/\\d{2})/([^/]+)$")
 
 @Composable
 fun ShimmerBox(modifier: Modifier = Modifier, shape: RoundedCornerShape = RoundedCornerShape(18.dp)) {
