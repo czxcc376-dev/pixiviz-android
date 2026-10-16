@@ -13,10 +13,8 @@ import pixiviz.mobile.data.remote.web.GuestSource
 
 /** Errors surfaced to the UI, already classified so screens can message them precisely. */
 sealed class RelayException(message: String, cause: Throwable? = null) : Exception(message, cause) {
-    /** Requested something the active source cannot serve. */
     class NeedsSignIn : RelayException("这个内容需要登录 pixiv 才能浏览")
 
-    /** Credentials were rejected or a relay refused the request. */
     class Unauthorized : RelayException("登录已失效，或中转拒绝了请求")
 
     class Http(val code: Int, message: String) : RelayException(message)
@@ -24,13 +22,12 @@ sealed class RelayException(message: String, cause: Throwable? = null) : Excepti
     class Network(cause: Throwable) : RelayException("网络请求失败：${cause.message}", cause)
 }
 
-/**
- * Ranking modes.
- *
- * `key` is what pixiv's app-api calls it, which HibiAPI also accepts; `webMode` is the
- * equivalent on the public web ranking. `adult` modes are only offered where the active
- * source can actually serve them.
- */
+/** True when a failure means "throw the stored credential away and use another source". */
+private fun Throwable.isCredentialRejection(): Boolean =
+    this is RelayException.Unauthorized ||
+        (this as? RelayException.Http)?.code == 400 ||
+        (this as? RelayException.Http)?.code == 401
+
 data class RankMode(
     val key: String,
     val label: String,
@@ -81,13 +78,14 @@ class IllustPagingSource(private val loader: IllustLoader) : PagingSource<String
 }
 
 /**
- * Single entry point for content, with three sources in priority order:
+ * Single entry point for content, with sources in priority order:
  *
- *  1. signed in  -> app-api directly, from the device (own account, own R-18 settings)
- *  2. relay set  -> a HibiAPI-compatible backend, which serves R-18 without an account
+ *  1. signed in  -> app-api directly from the device (own account)
+ *  2. relay set  -> HibiAPI-compatible backend, which also serves R-18 with no account
  *  3. otherwise  -> pixiv's public web endpoints (no R-18, ranking approximated)
  *
- * Traffic never goes through Cloudflare Workers: pixiv answers that egress with a block page.
+ * If a signed-in call is rejected the stored credential is dropped and the request is
+ * replayed against the relay, so a stale token can never turn the whole app into errors.
  */
 class PixivRepository(
     private val config: RelayConfig,
@@ -96,6 +94,7 @@ class PixivRepository(
     private val guest: GuestSource,
     private val signedIn: () -> Boolean,
     private val backendAvailable: () -> Boolean,
+    private val onAuthFailure: () -> Unit,
 ) {
 
     private fun appBase(): String = BuildConfig.PIXIV_APP_API_BASE.trimEnd('/')
@@ -122,42 +121,64 @@ class PixivRepository(
         }
     }
 
-    /** True when adult ranking modes can be served by whatever source is active. */
     fun adultContentAvailable(): Boolean = signedIn() || backendAvailable()
+
+    /** Replays a rejected signed-in request against the next-best source. */
+    private fun withFallback(app: IllustLoader, fallback: () -> IllustLoader): IllustLoader =
+        IllustLoader { next ->
+            try {
+                app.load(next)
+            } catch (e: RelayException) {
+                if (!e.isCredentialRejection()) throw e
+                onAuthFailure()
+                fallback().load(next)
+            }
+        }
+
+    private fun relayOrGuestRank(mode: String, date: String?): IllustLoader {
+        val rankMode = RankModes.byKey(mode)
+        if (backendAvailable()) return hibi.rankLoader(HibiRankModes.resolve(rankMode.key), date)
+        if (rankMode.adult) return IllustLoader { throw RelayException.NeedsSignIn() }
+        return guest.rankLoader(rankMode.webMode)
+    }
+
+    private fun relayOrGuestSearch(word: String, sort: String, duration: String?): IllustLoader =
+        if (backendAvailable()) {
+            hibi.searchLoader(word, sort, duration)
+        } else {
+            guest.searchLoader(word, mode = "all", order = if (sort == "popular_desc") "popular_d" else "date_d")
+        }
+
+    private fun relayOrGuestUserIllusts(userId: Long): IllustLoader =
+        if (backendAvailable()) hibi.userIllustsLoader(userId) else guest.userWorksLoader(userId)
+
+    private fun relayOrGuestRecommended(): IllustLoader =
+        if (backendAvailable()) hibi.discoverLoader() else guest.discoveryLoader()
 
     // ---------------------------------------------------------------- loaders
 
     fun rankLoader(mode: String, date: String? = null): IllustLoader {
-        val rankMode = RankModes.byKey(mode)
-        if (!signedIn()) {
-            if (backendAvailable()) {
-                val isoDate = date ?: if (rankMode.key.startsWith("day")) HibiRankModes.todayIso() else null
-                return hibi.rankLoader(HibiRankModes.resolve(rankMode.key), isoDate)
-            }
-            if (rankMode.adult) return IllustLoader { throw RelayException.NeedsSignIn() }
-            return guest.rankLoader(rankMode.webMode)
-        }
-        return IllustLoader { next ->
+        if (!signedIn()) return relayOrGuestRank(mode, date)
+        val app = IllustLoader { next ->
             call {
-                val url = next ?: build(
-                    "/v1/illust/ranking",
-                    buildMap {
-                        put("mode", mode)
-                        put("filter", "for_android")
-                        if (!date.isNullOrBlank()) put("date", date)
-                    },
+                api.illustList(
+                    next ?: build(
+                        "/v1/illust/ranking",
+                        buildMap {
+                            put("mode", mode)
+                            put("filter", "for_android")
+                            if (!date.isNullOrBlank()) put("date", date)
+                        },
+                    ),
                 )
-                api.illustList(url)
             }
         }
+        return withFallback(app) { relayOrGuestRank(mode, date) }
     }
 
     fun recommendedLoader(): IllustLoader {
-        if (!signedIn()) {
-            if (backendAvailable()) return hibi.discoverLoader()
-            return guest.discoveryLoader()
-        }
-        return IllustLoader { next ->
+        if (!signedIn()) return relayOrGuestRecommended()
+        val app = IllustLoader { next ->
             call {
                 api.illustList(
                     next ?: build(
@@ -167,6 +188,7 @@ class PixivRepository(
                 )
             }
         }
+        return withFallback(app) { relayOrGuestRecommended() }
     }
 
     fun searchLoader(
@@ -175,34 +197,29 @@ class PixivRepository(
         sort: String = "date_desc",
         duration: String? = null,
     ): IllustLoader {
-        if (!signedIn()) {
-            if (backendAvailable()) return hibi.searchLoader(word, sort, duration)
-            val webOrder = if (sort == "popular_desc") "popular_d" else "date_d"
-            return guest.searchLoader(word, mode = "all", order = webOrder)
-        }
-        return IllustLoader { next ->
+        if (!signedIn()) return relayOrGuestSearch(word, sort, duration)
+        val app = IllustLoader { next ->
             call {
-                val url = next ?: build(
-                    "/v2/search/illust",
-                    buildMap {
-                        put("word", word)
-                        put("search_target", searchTarget)
-                        put("sort", sort)
-                        put("filter", "for_android")
-                        if (!duration.isNullOrBlank()) put("duration", duration)
-                    },
+                api.illustList(
+                    next ?: build(
+                        "/v2/search/illust",
+                        buildMap {
+                            put("word", word)
+                            put("search_target", searchTarget)
+                            put("sort", sort)
+                            put("filter", "for_android")
+                            if (!duration.isNullOrBlank()) put("duration", duration)
+                        },
+                    ),
                 )
-                api.illustList(url)
             }
         }
+        return withFallback(app) { relayOrGuestSearch(word, sort, duration) }
     }
 
     fun userIllustsLoader(userId: Long): IllustLoader {
-        if (!signedIn()) {
-            if (backendAvailable()) return hibi.userIllustsLoader(userId)
-            return guest.userWorksLoader(userId)
-        }
-        return IllustLoader { next ->
+        if (!signedIn()) return relayOrGuestUserIllusts(userId)
+        val app = IllustLoader { next ->
             call {
                 api.illustList(
                     next ?: build(
@@ -212,13 +229,19 @@ class PixivRepository(
                 )
             }
         }
+        return withFallback(app) { relayOrGuestUserIllusts(userId) }
     }
 
-    fun relatedLoader(illustId: Long): IllustLoader = IllustLoader { next ->
-        when {
-            !signedIn() && backendAvailable() -> hibi.relatedLoader(illustId).load(next)
-            !signedIn() -> IllustListResponse(illusts = guest.related(illustId))
-            else -> call {
+    fun relatedLoader(illustId: Long): IllustLoader {
+        if (!signedIn()) {
+            return if (backendAvailable()) {
+                hibi.relatedLoader(illustId)
+            } else {
+                IllustLoader { IllustListResponse(illusts = guest.related(illustId)) }
+            }
+        }
+        val app = IllustLoader {
+            call {
                 api.illustList(
                     build(
                         "/v2/illust/related",
@@ -227,52 +250,71 @@ class PixivRepository(
                 )
             }
         }
+        return withFallback(app) {
+            if (backendAvailable()) hibi.relatedLoader(illustId) else IllustLoader { IllustListResponse() }
+        }
     }
 
     // ---------------------------------------------------------------- singles
 
-    suspend fun illustDetail(illustId: Long): Illust = when {
-        signedIn() -> call {
-            api.illustDetail(build("/v1/illust/detail", mapOf("illust_id" to illustId.toString()))).illust
+    private suspend fun <T> single(appCall: suspend () -> T, fallback: suspend () -> T): T {
+        if (!signedIn()) return fallback()
+        return try {
+            appCall()
+        } catch (e: RelayException) {
+            if (!e.isCredentialRejection()) throw e
+            onAuthFailure()
+            fallback()
         }
-        backendAvailable() -> hibi.illustDetail(illustId)
-        else -> guest.illustDetail(illustId)
     }
 
-    suspend fun userDetail(userId: Long): UserDetailResponse = when {
-        signedIn() -> call {
-            api.userDetail(
-                build("/v1/user/detail", mapOf("user_id" to userId.toString(), "filter" to "for_android")),
-            )
-        }
-        backendAvailable() -> hibi.userDetail(userId)
-        else -> guest.userDetail(userId)
-    }
+    suspend fun illustDetail(illustId: Long): Illust = single(
+        appCall = {
+            call {
+                api.illustDetail(build("/v1/illust/detail", mapOf("illust_id" to illustId.toString()))).illust
+            }
+        },
+        fallback = { if (backendAvailable()) hibi.illustDetail(illustId) else guest.illustDetail(illustId) },
+    )
 
-    suspend fun trendingTags(): List<TrendingTag> = when {
-        signedIn() -> call {
-            api.trendingTags(build("/v1/trending-tags/illust", mapOf("filter" to "for_android"))).trendTags
-        }
-        backendAvailable() -> hibi.trendingTags()
-        else -> guest.trendingTags()
-    }
+    suspend fun userDetail(userId: Long): UserDetailResponse = single(
+        appCall = {
+            call {
+                api.userDetail(
+                    build("/v1/user/detail", mapOf("user_id" to userId.toString(), "filter" to "for_android")),
+                )
+            }
+        },
+        fallback = { if (backendAvailable()) hibi.userDetail(userId) else guest.userDetail(userId) },
+    )
 
-    suspend fun autocomplete(word: String): List<AutocompleteTag> = when {
-        signedIn() -> call { api.autocomplete(build("/v2/search/autocomplete", mapOf("word" to word))).tags }
-        backendAvailable() -> hibi.autocomplete()
-        else -> guest.autocomplete()
-    }
+    suspend fun trendingTags(): List<TrendingTag> = single(
+        appCall = {
+            call {
+                api.trendingTags(build("/v1/trending-tags/illust", mapOf("filter" to "for_android"))).trendTags
+            }
+        },
+        fallback = { if (backendAvailable()) hibi.trendingTags() else guest.trendingTags() },
+    )
 
-    suspend fun searchUser(word: String): List<UserPreview> = when {
-        signedIn() -> call {
-            api.searchUser(build("/v1/search/user", mapOf("word" to word, "filter" to "for_android")))
-                .userPreviews
-        }
-        backendAvailable() -> hibi.searchUser(word)
-        else -> guest.searchUser()
-    }
+    suspend fun autocomplete(word: String): List<AutocompleteTag> = single(
+        appCall = { call { api.autocomplete(build("/v2/search/autocomplete", mapOf("word" to word))).tags } },
+        fallback = { if (backendAvailable()) hibi.autocomplete() else guest.autocomplete() },
+    )
+
+    suspend fun searchUser(word: String): List<UserPreview> = single(
+        appCall = {
+            call {
+                api.searchUser(build("/v1/search/user", mapOf("word" to word, "filter" to "for_android")))
+                    .userPreviews
+            }
+        },
+        fallback = { if (backendAvailable()) hibi.searchUser(word) else guest.searchUser() },
+    )
 
     // ---------------------------------------------------------------- helpers
+
+    suspend fun backendHealth(): Result<String> = hibi.healthCheck()
 
     /**
      * DIRECT keeps i.pximg.net and lets the interceptor add the referer, which is the fastest

@@ -18,19 +18,38 @@ import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFact
 import pixiviz.mobile.data.remote.web.WebApi
 
 /**
- * Only the optional image relay still points at the Worker.
+ * Runtime relay configuration.
  *
- * pixiv blocks Cloudflare's egress IPs outright (\u30d6\u30ed\u30c3\u30af\u3055\u308c\u307e\u3057\u305f), so API traffic
- * cannot be relayed there; it goes straight from the device, which is also what keeps the
- * account risk low - the pxve-api project lost its upstream account to server-side relaying.
+ * pixiv blocks Cloudflare's egress outright (\u30d6\u30ed\u30c3\u30af\u3055\u308c\u307e\u3057\u305f), so API traffic goes straight
+ * from the device to pixiv; the relay list is used only for the HibiAPI-compatible backend.
+ * Several endpoints can be listed and they are rotated automatically when one fails - the
+ * same idea as the original project's multi-line probe-and-failover, which matters because
+ * a single public instance is neither reliable nor under our control.
  */
 class RelayConfig {
+
+    @Volatile var backendUrls: List<String> = emptyList()
+
     @Volatile var workerUrl: String = ""
     @Volatile var appKey: String = ""
     @Volatile var accessToken: String? = null
-    /** HibiAPI-compatible relay base. The default source, and it serves R-18. */
-    @Volatile var backendUrl: String = ""
     @Volatile var imageChannelDirect: Boolean = true
+
+    private var index = 0
+
+    /** Currently preferred backend, or empty when the relay is disabled. */
+    fun backendUrl(): String = backendUrls.getOrElse(index) { "" }
+
+    /** Moves to the next configured backend; returns false when there is nowhere else to go. */
+    fun rotateBackend(): Boolean {
+        if (backendUrls.size <= 1) return false
+        index = (index + 1) % backendUrls.size
+        return true
+    }
+
+    fun resetBackend() {
+        index = 0
+    }
 
     fun baseUrl(): String = workerUrl.trimEnd('/')
 }
@@ -49,7 +68,7 @@ const val APP_OS_VERSION = "11"
 const val APP_VERSION = "5.0.234"
 const val ACCEPT_LANGUAGE = "zh-CN"
 
-/** i.pximg.net rejects requests without a pixiv referer. */
+/** A browser-shaped UA is required by i.pximg.net and by the relays. */
 const val BROWSER_UA =
     "Mozilla/5.0 (Linux; Android 11; Pixel 4) AppleWebKit/537.36 (KHTML, like Gecko) " +
         "Chrome/124.0.0.0 Mobile Safari/537.36"
@@ -68,16 +87,30 @@ fun md5Hex(input: String): String =
         .joinToString("") { "%02x".format(it) }
 
 /**
- * One HTTP stack serves two very different upstreams, so headers are chosen per host
- * instead of building two clients with duplicated retry/cache policy.
+ * One HTTP stack serves three very different upstreams, so headers are chosen per host.
+ *
+ * Order matters: the relay check comes before the generic fallback, otherwise a relay would
+ * receive pixiv's Referer, which some instances answer with a 400.
  */
 private class HostHeadersInterceptor(private val config: RelayConfig) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
         val host = original.url.host
         val builder = original.newBuilder()
+        val isRelay = config.backendUrls.any { it.contains(host) }
+        val isWorker = config.workerUrl.isNotBlank() && config.workerUrl.contains(host)
 
         when {
+            isRelay -> {
+                builder.header("User-Agent", BROWSER_UA)
+                builder.header("Accept-Language", ACCEPT_LANGUAGE)
+            }
+
+            isWorker -> {
+                if (config.appKey.isNotBlank()) builder.header("X-App-Key", config.appKey)
+                builder.header("User-Agent", BROWSER_UA)
+            }
+
             host.endsWith("app-api.pixiv.net") || host.endsWith("oauth.secure.pixiv.net") -> {
                 val time = clientTime()
                 builder.header("User-Agent", APP_UA)
@@ -97,13 +130,8 @@ private class HostHeadersInterceptor(private val config: RelayConfig) : Intercep
                 builder.header("User-Agent", BROWSER_UA)
             }
 
-            config.workerUrl.isNotBlank() && config.workerUrl.contains(host) -> {
-                if (config.appKey.isNotBlank()) builder.header("X-App-Key", config.appKey)
-            }
-
             else -> {
-                // www.pixiv.net public web endpoints: no cookie and no login are required,
-                // but they do expect a browser-shaped request.
+                // pixiv's own public web endpoints: browser-shaped, no cookie needed.
                 builder.header("User-Agent", BROWSER_UA)
                 builder.header("Referer", "https://www.pixiv.net/")
                 builder.header("Accept-Language", ACCEPT_LANGUAGE)
@@ -118,6 +146,7 @@ object Network {
     fun sharedClient(config: RelayConfig): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .addInterceptor(HostHeadersInterceptor(config))
         .build()
 
@@ -133,8 +162,8 @@ object Network {
 }
 
 /**
- * Signed-in calls always take an absolute URL. With a token we talk to app-api (which is the
- * only surface that returns R-18 works); without one, the guest source talks to www.pixiv.net.
+ * Signed-in calls always take an absolute URL. With a token we talk to app-api (own account);
+ * otherwise the HibiAPI-compatible relay or pixiv's public web endpoints.
  */
 interface PixivApi {
 

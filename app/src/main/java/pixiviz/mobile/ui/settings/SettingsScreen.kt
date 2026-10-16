@@ -262,9 +262,10 @@ fun SettingsScreen() {
                 OutlinedTextField(
                     value = backendUrl,
                     onValueChange = { backendUrl = it },
-                    label = { Text("中转地址（HibiAPI 兼容）") },
+                    label = { Text("中转地址（HibiAPI 兼容，可填多个）") },
                     placeholder = { Text(BuildConfig.DEFAULT_BACKEND_URL) },
-                    singleLine = true,
+                    supportingText = { Text("多个地址用换行或逗号分隔；某个挂了会自动切下一个。") },
+                    minLines = 2,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -273,6 +274,35 @@ fun SettingsScreen() {
                             app.settingsStore.setBackendUrl(backendUrl)
                             app.applySettings(settings.copy(backendUrl = backendUrl.trim()))
                             status = "数据源已保存"
+                        }
+                    })
+                    CapsuleButton(text = "诊断", selected = false, onClick = {
+                        busy = true
+                        scope.launch {
+                            val report = StringBuilder()
+                            report.append("登录: ")
+                                .append(if (signedIn) "是（用你自己的账号直连）" else "否")
+                                .append('\n')
+                            report.append("数据源: ")
+                                .append(app.config.backendUrl().ifBlank { "未配置，用 pixiv 公开网页接口" })
+                                .append('\n')
+                            app.repository.backendHealth()
+                                .onSuccess { report.append("中转体检: ").append(it) }
+                                .onFailure { report.append("中转体检: 失败 · ").append(it.message) }
+                            report.append('\n')
+                            runCatching { app.repository.trendingTags() }
+                                .onSuccess { report.append("热门标签: ").append(it.size).append(" 条") }
+                                .onFailure { report.append("热门标签: 失败 · ").append(it.message) }
+                            report.append('\n')
+                            runCatching { app.repository.rankLoader("day", null).load(null) }
+                                .onSuccess { report.append("日榜: ").append(it.illusts.size).append(" 条") }
+                                .onFailure { report.append("日榜: 失败 · ").append(it.message) }
+                            report.append('\n')
+                            runCatching { app.repository.rankLoader("day_r18", null).load(null) }
+                                .onSuccess { report.append("R18 日榜: ").append(it.illusts.size).append(" 条") }
+                                .onFailure { report.append("R18 日榜: 失败 · ").append(it.message) }
+                            status = report.toString()
+                            busy = false
                         }
                     })
                     CapsuleButton(text = "恢复默认", selected = false, onClick = {

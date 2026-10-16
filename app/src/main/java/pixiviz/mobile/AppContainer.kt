@@ -1,6 +1,10 @@
 package pixiviz.mobile
 
 import android.content.Context
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import pixiviz.mobile.data.auth.AuthRepository
 import pixiviz.mobile.data.auth.SecureTokenStore
@@ -40,7 +44,7 @@ class AppContainer(context: Context) {
     val guest = GuestSource(webApi)
 
     /** Reads through the volatile config so changing the relay in Settings takes effect live. */
-    val hibi = HibiSource(appApi) { config.backendUrl }
+    val hibi = HibiSource(appApi, config)
 
     val auth = AuthRepository(tokenStore, config, httpClient, PixivJson)
 
@@ -50,15 +54,29 @@ class AppContainer(context: Context) {
         hibi = hibi,
         guest = guest,
         signedIn = { auth.signedIn.value },
-        backendAvailable = { config.backendUrl.isNotBlank() },
+        backendAvailable = { config.backendUrl().isNotBlank() },
+        onAuthFailure = {
+            auth.invalidateSession()
+            scope.launch { auth.forgetStoredToken() }
+        },
     )
 
     private val database = PixivizDatabase.build(appContext)
     val history: HistoryDao = database.history()
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     /** Pushes persisted preferences into the volatile relay config. */
     fun applySettings(settings: Settings) {
-        config.backendUrl = settings.backendUrl.ifBlank { BuildConfig.DEFAULT_BACKEND_URL }
+        // Several endpoints may be listed (comma or newline separated) and are rotated on failure.
+        val endpoints = settings.backendUrl.ifBlank { BuildConfig.DEFAULT_BACKEND_URL }
+            .split(',', '\n')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        if (config.backendUrls != endpoints) {
+            config.backendUrls = endpoints
+            config.resetBackend()
+        }
         config.workerUrl = settings.workerUrl.ifBlank { BuildConfig.DEFAULT_WORKER_URL }
         config.appKey = settings.appKey.ifBlank { BuildConfig.DEFAULT_APP_KEY }
         config.imageChannelDirect = settings.imageChannel == ImageChannel.DIRECT

@@ -106,6 +106,19 @@ class AuthRepository(
         _signedIn.value = false
     }
 
+    /**
+     * Drops the in-memory session the moment a request is rejected, so a stale token can never
+     * make every subsequent call fail. Callers then replay the request against the relay.
+     */
+    fun invalidateSession() {
+        config.accessToken = null
+        _signedIn.value = false
+        _lastError.value = "登录状态已失效，已自动切换到中转数据源"
+    }
+
+    /** Also forget the sealed refresh token; used off the main thread after invalidation. */
+    suspend fun forgetStoredToken() = withContext(Dispatchers.IO) { tokenStore.clear() }
+
     fun clearError() {
         _lastError.value = null
     }

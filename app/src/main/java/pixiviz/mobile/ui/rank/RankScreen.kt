@@ -62,8 +62,10 @@ fun RankScreen(onOpenIllust: (Long) -> Unit) {
     }
     val date = remember(offset, step) { LocalDate.now().minusDays((offset * step).toLong()) }
 
+    // Only pin a date once the user steps back: pixiv rejects an explicit "current" date,
+    // which surfaced as a 500 from the relay.
     val paging = rememberIllustPaging(key = "rank-$mode-$offset") {
-        app.repository.rankLoader(mode, date.toString())
+        app.repository.rankLoader(mode, if (offset == 0) null else date.toString())
     }
 
     PagedIllustGrid(
