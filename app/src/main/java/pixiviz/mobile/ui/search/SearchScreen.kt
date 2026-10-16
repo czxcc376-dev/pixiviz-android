@@ -26,12 +26,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import pixiviz.mobile.data.remote.AutocompleteTag
 import pixiviz.mobile.data.remote.UserPreview
 import pixiviz.mobile.data.settings.GridLayout
@@ -67,6 +69,13 @@ fun SearchScreen(
     var tab by remember { mutableStateOf(SearchTab.WORKS) }
     var sort by remember { mutableStateOf(SortOption.NEW) }
     var suggestions by remember { mutableStateOf<List<AutocompleteTag>>(emptyList()) }
+    val scope = rememberCoroutineScope()
+
+    fun submit(word: String) {
+        submitted = word
+        query = word
+        scope.launch { app.settingsStore.addSearchHistory(word) }
+    }
 
     var users by remember { mutableStateOf<List<UserPreview>>(emptyList()) }
     var userError by remember { mutableStateOf<String?>(null) }
@@ -122,12 +131,31 @@ fun SearchScreen(
                 imeAction = ImeAction.Search,
             ),
             keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                onSearch = { submitted = query.trim() },
+                onSearch = { submit(query.trim()) },
             ),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         )
+
+        if (query.isBlank() && settings.searchHistory.isNotEmpty()) {
+            androidx.compose.foundation.lazy.LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+            ) {
+                items(items = settings.searchHistory, key = { it }) { item ->
+                    CapsuleButton(text = item, selected = false, onClick = { submit(item) })
+                }
+                item {
+                    CapsuleButton(
+                        text = "清空",
+                        selected = false,
+                        onClick = { scope.launch { app.settingsStore.clearSearchHistory() } },
+                    )
+                }
+            }
+        }
 
         if (suggestions.isNotEmpty() && query.trim() != submitted) {
             LazyRow(
@@ -139,10 +167,7 @@ fun SearchScreen(
                     CapsuleButton(
                         text = suggestion.translatedName?.takeIf { it.isNotBlank() } ?: suggestion.name,
                         selected = false,
-                        onClick = {
-                            query = suggestion.name
-                            submitted = suggestion.name
-                        },
+                        onClick = { submit(suggestion.name) },
                     )
                 }
             }

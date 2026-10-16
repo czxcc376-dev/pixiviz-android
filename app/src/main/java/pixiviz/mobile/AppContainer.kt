@@ -7,6 +7,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import pixiviz.mobile.data.auth.AuthRepository
+import pixiviz.mobile.data.download.ImageDownloader
 import pixiviz.mobile.data.auth.SecureTokenStore
 import pixiviz.mobile.data.local.HistoryDao
 import pixiviz.mobile.data.local.PixivizDatabase
@@ -42,6 +43,9 @@ class AppContainer(context: Context) {
     private val webApi = Network.createWebApi(httpClient)
 
     val guest = GuestSource(webApi)
+
+    /** Writes finished images into the system gallery under Pictures/Pixiviz. */
+    val downloader = ImageDownloader(appContext, httpClient)
 
     /** Reads through the volatile config so changing the relay in Settings takes effect live. */
     val hibi = HibiSource(appApi, config)

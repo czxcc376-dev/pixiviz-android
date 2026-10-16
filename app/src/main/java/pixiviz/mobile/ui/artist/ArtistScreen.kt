@@ -21,12 +21,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import pixiviz.mobile.ui.common.CapsuleButton
 import pixiviz.mobile.data.remote.UserDetail
 import pixiviz.mobile.data.settings.GridLayout
 import pixiviz.mobile.ui.LocalApp
@@ -46,9 +48,13 @@ fun ArtistScreen(
     val settings = LocalSettings.current
     val columns = if (settings.gridLayout == GridLayout.DOUBLE) 2 else 1
 
+    val scope = rememberCoroutineScope()
     var detail by remember { mutableStateOf<UserDetail?>(null) }
+    var followed by remember { mutableStateOf(false) }
+    var followStatus by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(userId) {
         detail = runCatching { app.repository.userDetail(userId).user }.getOrNull()
+        followed = detail?.isFollowed == true
     }
 
     val paging = rememberIllustPaging(key = "artist-$userId") {
@@ -93,7 +99,25 @@ fun ArtistScreen(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        followStatus?.let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
                     }
+                    CapsuleButton(
+                        text = if (followed) "已关注" else "关注",
+                        selected = followed,
+                        onClick = {
+                            scope.launch {
+                                app.repository.setFollow(userId, !followed)
+                                    .onSuccess { followed = !followed; followStatus = null }
+                                    .onFailure { followStatus = it.message }
+                            }
+                        },
+                    )
                 }
                 detail?.profile?.let { profile ->
                     if (profile.introduction.isNotBlank()) {

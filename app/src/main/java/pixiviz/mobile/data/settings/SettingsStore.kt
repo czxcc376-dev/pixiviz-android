@@ -35,6 +35,7 @@ data class Settings(
     val gridLayout: GridLayout = GridLayout.DOUBLE,
     val showAiWorks: Boolean = true,
     val lastRankMode: String = "day",
+    val searchHistory: List<String> = emptyList(),
 )
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "pixiviz_settings")
@@ -60,6 +61,7 @@ class SettingsStore(context: Context) {
             gridLayout = prefs[KEY_GRID_LAYOUT].toEnum<GridLayout>(GridLayout.DOUBLE),
             showAiWorks = prefs[KEY_SHOW_AI] ?: true,
             lastRankMode = prefs[KEY_LAST_RANK] ?: "day",
+            searchHistory = prefs[KEY_SEARCH_HISTORY]?.split('\n')?.filter { it.isNotBlank() }.orEmpty(),
         )
     }
 
@@ -73,6 +75,18 @@ class SettingsStore(context: Context) {
     suspend fun setPureBlack(value: Boolean) = store.edit { it[KEY_PURE_BLACK] = value }
     suspend fun setGridLayout(value: GridLayout) = store.edit { it[KEY_GRID_LAYOUT] = value.name }
     suspend fun setShowAiWorks(value: Boolean) = store.edit { it[KEY_SHOW_AI] = value }
+    /** Keeps the most recent 20 distinct queries. */
+    suspend fun addSearchHistory(word: String) {
+        val clean = word.trim()
+        if (clean.isEmpty()) return
+        store.edit { prefs ->
+            val current = prefs[KEY_SEARCH_HISTORY]?.split('\n')?.filter { it.isNotBlank() }.orEmpty()
+            prefs[KEY_SEARCH_HISTORY] = (listOf(clean) + current.filter { it != clean }).take(20).joinToString("\n")
+        }
+    }
+
+    suspend fun clearSearchHistory() = store.edit { it.remove(KEY_SEARCH_HISTORY) }
+
     suspend fun setLastRankMode(value: String) = store.edit { it[KEY_LAST_RANK] = value }
 
     private companion object {
@@ -87,6 +101,7 @@ class SettingsStore(context: Context) {
         val KEY_GRID_LAYOUT = stringPreferencesKey("grid_layout")
         val KEY_SHOW_AI = booleanPreferencesKey("show_ai_works")
         val KEY_LAST_RANK = stringPreferencesKey("last_rank_mode")
+        val KEY_SEARCH_HISTORY = stringPreferencesKey("search_history")
     }
 }
 

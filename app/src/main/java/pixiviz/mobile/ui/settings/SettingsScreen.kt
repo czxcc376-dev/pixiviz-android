@@ -51,11 +51,13 @@ fun SettingsScreen() {
     val settings = LocalSettings.current
     val scope = rememberCoroutineScope()
     val signedIn by app.auth.signedIn.collectAsStateWithLifecycle()
+    val downloadTasks by app.downloader.tasks.collectAsStateWithLifecycle()
 
     var workerUrl by remember(settings.workerUrl) { mutableStateOf(settings.workerUrl) }
     var appKey by remember(settings.appKey) { mutableStateOf(settings.appKey) }
     var ageDialog by remember { mutableStateOf<NsfwMode?>(null) }
     var showLogin by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf<String?>(null) }
     var backendUrl by remember(settings.backendUrl) { mutableStateOf(settings.backendUrl) }
     var status by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -366,6 +368,61 @@ fun SettingsScreen() {
                     })
                 }
                 status?.let {
+                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+
+        item {
+            Section("下载") {
+                Text(
+                    "成品图保存到相册的 Pictures/Pixiviz；Android 10+ 走 MediaStore，不需要任何存储权限。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (downloadTasks.isEmpty()) {
+                    Text("暂无下载任务", style = MaterialTheme.typography.labelSmall)
+                } else {
+                    downloadTasks.takeLast(6).forEach { task ->
+                        val suffix = task.message?.let { " · $it" }.orEmpty()
+                        Text(
+                            "${task.state.name} · ${task.title.take(18)} (${task.page}/${task.pageCount})$suffix",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    CapsuleButton(text = "清除已结束的任务", selected = false, onClick = {
+                        app.downloader.clearFinished()
+                    })
+                }
+            }
+        }
+
+        item {
+            Section("更新") {
+                Text("版本 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyMedium)
+                CapsuleButton(text = "检查更新", selected = false, onClick = {
+                    busy = true
+                    scope.launch {
+                        updateInfo = withContext(Dispatchers.IO) {
+                            runCatching {
+                                val request = Request.Builder()
+                                    .url("https://api.github.com/repos/czxcc376-dev/pixiviz-android/releases/latest")
+                                    .build()
+                                app.httpClient.newCall(request).execute().use { response ->
+                                    val body = response.body?.string().orEmpty()
+                                    val tag = Regex("\"tag_name\"\\s*:\\s*\"([^\"]+)\"")
+                                        .find(body)?.groupValues?.get(1)
+                                    if (tag == null) "检查失败：HTTP ${response.code}"
+                                    else if (tag == "v${BuildConfig.VERSION_NAME}") "已是最新版本 $tag"
+                                    else "有新版本 $tag（当前 v${BuildConfig.VERSION_NAME}）\nhttps://github.com/czxcc376-dev/pixiviz-android/releases/latest"
+                                }
+                            }.getOrElse { "检查失败：${it.message}" }
+                        }
+                        busy = false
+                    }
+                })
+                updateInfo?.let {
                     Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }

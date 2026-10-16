@@ -314,6 +314,36 @@ class PixivRepository(
 
     // ---------------------------------------------------------------- helpers
 
+    // ---------------------------------------------------------------- write actions
+
+    /**
+     * Bookmarking and following go to app-api with the user's own token; the public relay
+     * cannot do them. [restrict] is "public" or "private".
+     */
+    suspend fun setBookmark(illustId: Long, bookmarked: Boolean, restrict: String = "public") = call {
+        if (!signedIn()) throw RelayException.NeedsSignIn()
+        if (bookmarked) {
+            api.postForm(
+                build("/v2/illust/bookmark/add"),
+                mapOf("illust_id" to illustId.toString(), "restrict" to restrict),
+            ).close()
+        } else {
+            api.delete(build("/v1/illust/bookmark/delete", mapOf("illust_id" to illustId.toString()))).close()
+        }
+    }
+
+    suspend fun setFollow(userId: Long, follow: Boolean) = call {
+        if (!signedIn()) throw RelayException.NeedsSignIn()
+        if (follow) {
+            api.postForm(
+                build("/v2/user/follow", mapOf("user_id" to userId.toString())),
+                mapOf("restrict" to "public"),
+            ).close()
+        } else {
+            api.delete(build("/v1/user/follow/delete", mapOf("user_id" to userId.toString()))).close()
+        }
+    }
+
     suspend fun backendHealth(): Result<String> = hibi.healthCheck()
 
     /**

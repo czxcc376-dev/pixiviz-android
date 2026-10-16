@@ -6,7 +6,12 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Response
 import retrofit2.Retrofit
+import okhttp3.ResponseBody
+import retrofit2.http.DELETE
+import retrofit2.http.FieldMap
+import retrofit2.http.FormUrlEncoded
 import retrofit2.http.GET
+import retrofit2.http.POST
 import retrofit2.http.Url
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
@@ -184,4 +189,12 @@ interface PixivApi {
 
     @GET
     suspend fun userDetail(@Url url: String): UserDetailResponse
+
+    /** Write operations. These require a real account, so they only run when signed in. */
+    @FormUrlEncoded
+    @POST
+    suspend fun postForm(@Url url: String, @FieldMap fields: Map<String, String>): ResponseBody
+
+    @DELETE
+    suspend fun delete(@Url url: String): ResponseBody
 }

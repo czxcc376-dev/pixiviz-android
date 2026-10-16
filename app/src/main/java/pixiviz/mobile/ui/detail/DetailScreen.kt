@@ -24,6 +24,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Bookmark
+import androidx.compose.material.icons.rounded.BookmarkBorder
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +48,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import pixiviz.mobile.data.local.HistoryEntry
 import pixiviz.mobile.data.remote.Illust
 import pixiviz.mobile.ui.LocalApp
@@ -64,7 +69,10 @@ fun DetailScreen(
     val app = LocalApp.current
     val settings = LocalSettings.current
 
+    val scope = rememberCoroutineScope()
     var illust by remember { mutableStateOf<Illust?>(null) }
+    var bookmarked by remember { mutableStateOf(false) }
+    var actionStatus by remember { mutableStateOf<String?>(null) }
     var related by remember { mutableStateOf<List<Illust>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -73,6 +81,7 @@ fun DetailScreen(
         runCatching { app.repository.illustDetail(illustId) }
             .onSuccess { loaded ->
                 illust = loaded
+                bookmarked = loaded.isBookmarked
                 app.history.upsert(
                     HistoryEntry(
                         illustId = loaded.id,
@@ -111,6 +120,38 @@ fun DetailScreen(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
+            )
+            illust?.let { current ->
+                IconButton(onClick = {
+                    scope.launch {
+                        app.repository.setBookmark(current.id, !bookmarked)
+                            .onSuccess { bookmarked = !bookmarked; actionStatus = if (bookmarked) "已收藏" else "已取消收藏" }
+                            .onFailure { actionStatus = it.message }
+                    }
+                }) {
+                    Icon(
+                        imageVector = if (bookmarked) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
+                        contentDescription = "收藏",
+                        tint = if (bookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = {
+                    actionStatus = "已加入下载队列，完成后可在相册 Pictures/Pixiviz 找到"
+                    scope.launch {
+                        app.downloader.downloadIllust(current) { url -> app.repository.imageUrl(url) }
+                    }
+                }) {
+                    Icon(Icons.Rounded.Download, contentDescription = "下载原图")
+                }
+            }
+        }
+
+        actionStatus?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp),
             )
         }
 
