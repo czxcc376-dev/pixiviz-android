@@ -285,7 +285,7 @@ fun SettingsScreen() {
                                         BuildConfig.DEFAULT_WORKER_URL.trimEnd('/')
                                     }
                                     val request = Request.Builder().url("$url/health").build()
-                                    app.imageClient.newCall(request).execute().use { response ->
+                                    app.httpClient.newCall(request).execute().use { response ->
                                         "HTTP ${response.code} ${response.body?.string()?.take(160).orEmpty()}"
                                     }
                                 }.getOrElse { "失败：${it.message}" }

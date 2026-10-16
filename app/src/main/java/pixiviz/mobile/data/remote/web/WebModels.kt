@@ -176,8 +176,6 @@ private fun WebTag.label(): String =
         ?: translation?.en?.takeIf { it.isNotBlank() }
         ?: tag
 
-private fun <T> List<T>.orNullIfEmpty(): List<T>? = if (isEmpty()) null else this
-
 internal fun WebWork.toIllust(): Illust = Illust(
     id = id.asLong(),
     title = title,
@@ -211,8 +209,8 @@ internal fun WebIllustBody.toIllust(): Illust = Illust(
     title = illustTitle,
     type = if (illustType == 1) "manga" else "illust",
     imageUrls = ImageUrls(
-        squareMedium = urls.small.orNullIfEmpty() ?: urls.thumb,
-        medium = urls.regular.orNullIfEmpty() ?: urls.small,
+        squareMedium = urls.small.takeIf { it.isNotBlank() } ?: urls.thumb,
+        medium = urls.regular.takeIf { it.isNotBlank() } ?: urls.small,
         large = urls.regular,
         original = urls.original,
     ),
