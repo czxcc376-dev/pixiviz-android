@@ -16,11 +16,14 @@ class PixivizApp : Application(), SingletonImageLoader.Factory {
         container = AppContainer(this)
     }
 
-    /** Coil borrows the same OkHttp client that already handles referer + app-key headers. */
+    /**
+     * Coil borrows the shared OkHttp client, which already knows to add the pixiv referer for
+     * i.pximg.net and the app key when images are routed through the relay.
+     */
     override fun newImageLoader(context: PlatformContext): ImageLoader =
         ImageLoader.Builder(context)
             .components {
-                add(OkHttpNetworkFetcherFactory(callFactory = { container.imageClient }))
+                add(OkHttpNetworkFetcherFactory(callFactory = { container.httpClient }))
             }
             .build()
 }

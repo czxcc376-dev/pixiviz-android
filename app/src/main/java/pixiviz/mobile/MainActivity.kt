@@ -6,7 +6,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -18,7 +17,6 @@ import pixiviz.mobile.data.settings.Settings
 import pixiviz.mobile.data.settings.ThemeMode
 import pixiviz.mobile.ui.LocalApp
 import pixiviz.mobile.ui.LocalSettings
-import pixiviz.mobile.ui.gate.GateScreen
 import pixiviz.mobile.ui.nav.AppRoot
 import pixiviz.mobile.ui.theme.PixivizTheme
 import pixiviz.mobile.ui.theme.UiThemeMode
@@ -41,6 +39,9 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(settings) { container.applySettings(settings) }
             ready = true
 
+            // Restore a sealed refresh token once, so an existing session keeps working.
+            LaunchedEffect(Unit) { container.auth.restore() }
+
             PixivizTheme(
                 mode = settings.themeMode.toUiMode(),
                 pureBlack = settings.pureBlack,
@@ -50,28 +51,11 @@ class MainActivity : ComponentActivity() {
                     LocalSettings provides settings,
                 ) {
                     Surface(modifier = Modifier.fillMaxSize(), color = Color.Transparent) {
-                        Gate(container)
+                        AppRoot()
                     }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun Gate(container: AppContainer) {
-    val settings = LocalSettings.current
-    val signedIn by container.auth.signedIn.collectAsStateWithLifecycle()
-    val configured = settings.workerUrl.ifBlank { BuildConfig.DEFAULT_WORKER_URL }.isNotBlank()
-
-    LaunchedEffect(configured, settings.workerUrl, settings.appKey) {
-        if (configured) container.auth.restore()
-    }
-
-    when {
-        !configured -> GateScreen()
-        !signedIn -> pixiviz.mobile.ui.login.LoginScreen()
-        else -> AppRoot()
     }
 }
 

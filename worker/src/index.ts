@@ -201,6 +201,32 @@ async function handleHealth(env: Env): Promise<Response> {
   });
 }
 
+/**
+ * Guest browsing through pixiv's public web endpoints. Verified without any cookie:
+ * /ajax/illust/{id}, /ajax/illust/discovery, /ajax/search/artworks, /ranking.php?format=json.
+ * R-18 modes answer 403 here, so adult content still requires a signed-in token.
+ */
+const WEB_ALLOWED_PREFIXES = ['/ajax/', '/ranking.php', '/touch/'];
+
+async function handleWeb(env: Env, rest: string): Promise<Response> {
+  if (!WEB_ALLOWED_PREFIXES.some((prefix) => rest.startsWith(prefix))) {
+    return json({ error: 'path_not_allowed', path: rest }, 403);
+  }
+  const upstream = await fetch('https://www.pixiv.net' + rest, {
+    headers: {
+      'user-agent': BROWSER_UA,
+      referer: 'https://www.pixiv.net/',
+      'accept-language': ACCEPT_LANGUAGE,
+      accept: 'application/json, text/plain, */*',
+    },
+    cf: { cacheEverything: true, cacheTtl: 300 },
+  });
+  const headers = new Headers(cors());
+  headers.set('content-type', upstream.headers.get('content-type') ?? 'application/json; charset=utf-8');
+  headers.set('cache-control', 'public, max-age=300');
+  return new Response(upstream.body, { status: upstream.status, headers });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -259,6 +285,13 @@ export default {
       await env.TOKENS.put(REFRESH_TOKEN_KEY, refreshToken);
       await storeTokenFromResponse(env, payload);
       return json({ ok: true, user: payload?.response?.user ?? null });
+    }
+
+    if (path.startsWith('/web/')) {
+      if (!hasKey(request, env)) {
+        return json({ error: 'unauthorized', message: '需要 X-App-Key' }, 401);
+      }
+      return handleWeb(env, path.slice('/web'.length) + url.search);
     }
 
     if (path.startsWith('/img/')) {

@@ -42,6 +42,7 @@ import pixiviz.mobile.data.settings.ThemeMode
 import pixiviz.mobile.ui.LocalApp
 import pixiviz.mobile.ui.LocalSettings
 import pixiviz.mobile.ui.common.CapsuleButton
+import pixiviz.mobile.ui.login.LoginScreen
 import pixiviz.mobile.ui.nav.BottomBarReserve
 
 @Composable
@@ -54,8 +55,14 @@ fun SettingsScreen() {
     var workerUrl by remember(settings.workerUrl) { mutableStateOf(settings.workerUrl) }
     var appKey by remember(settings.appKey) { mutableStateOf(settings.appKey) }
     var ageDialog by remember { mutableStateOf<NsfwMode?>(null) }
+    var showLogin by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+
+    if (showLogin) {
+        LoginScreen(onDone = { showLogin = false })
+        return
+    }
 
     if (ageDialog != null) {
         AlertDialog(
@@ -101,6 +108,38 @@ fun SettingsScreen() {
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+
+        item {
+            Section("账号") {
+                Text(
+                    text = if (signedIn) {
+                        "已登录：18+ 内容与个性化推荐可用。"
+                    } else {
+                        "未登录：推荐、排行榜、搜索、画师与作品详情都可正常浏览，全部直连 pixiv。"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (signedIn) {
+                        CapsuleButton(
+                            text = "退出登录",
+                            selected = false,
+                            onClick = { scope.launch { app.auth.signOut() } },
+                        )
+                    } else {
+                        CapsuleButton(text = "登录 pixiv", onClick = { showLogin = true })
+                    }
+                }
+                if (!signedIn) {
+                    Text(
+                        "18+ 内容需要登录：pixiv 对未登录请求直接返回 403。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
 

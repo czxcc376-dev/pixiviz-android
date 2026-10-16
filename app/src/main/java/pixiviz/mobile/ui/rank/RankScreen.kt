@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import pixiviz.mobile.data.remote.RankModes
 import pixiviz.mobile.data.settings.GridLayout
 import pixiviz.mobile.data.settings.NsfwMode
@@ -38,7 +39,10 @@ fun RankScreen(onOpenIllust: (Long) -> Unit) {
 
     // Adult ranking modes stay hidden until the age gate has been confirmed and content
     // is not set to be hidden outright.
-    val adultVisible = settings.nsfwAgeConfirmed && settings.nsfwMode != NsfwMode.HIDE
+    val signedIn by app.auth.signedIn.collectAsStateWithLifecycle()
+    // pixiv answers 403 for adult ranking modes without a token, so they only
+    // appear once a session exists.
+    val adultVisible = signedIn && settings.nsfwAgeConfirmed && settings.nsfwMode != NsfwMode.HIDE
     val modes = remember(adultVisible) {
         RankModes.all.filter { adultVisible || !it.adult }
     }
@@ -108,7 +112,11 @@ fun RankScreen(onOpenIllust: (Long) -> Unit) {
 
                 if (!adultVisible) {
                     Text(
-                        text = "R18 榜单已在设置里隐藏；开启 18+ 显示后会出现。",
+                        text = if (!signedIn) {
+                            "R18 榜单需要登录 pixiv：未登录请求会被 pixiv 直接拒绝。"
+                        } else {
+                            "R18 榜单已按设置隐藏；在「我的 → 18+ 内容」里开启后会出现。"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 4.dp),

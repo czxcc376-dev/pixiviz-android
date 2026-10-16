@@ -18,6 +18,8 @@ val hasReleaseKeystore: Boolean =
 
 val defaultWorkerUrl: String = System.getenv("WORKER_URL") ?: ""
 val defaultAppKey: String = System.getenv("WORKER_ACCESS_KEY") ?: ""
+val pixivClientId: String = System.getenv("PIXIV_CLIENT_ID") ?: "MOBrBDS8blbauoSck0ZfDbtuzpyT"
+val pixivClientSecret: String = System.getenv("PIXIV_CLIENT_SECRET") ?: "lsACyCD94FhDUtGTXi3QzcFE2uU1hqtDaKeqrdwj"
 
 android {
     namespace = "pixiviz.mobile"
@@ -32,6 +34,14 @@ android {
         vectorDrawables { useSupportLibrary = true }
         buildConfigField("String", "DEFAULT_WORKER_URL", "\"$defaultWorkerUrl\"")
         buildConfigField("String", "DEFAULT_APP_KEY", "\"$defaultAppKey\"")
+        // Public constants of the official pixiv clients. Every third-party client ships
+        // these; they identify the app, not the user. Pixiv blocks datacenter IPs, so all
+        // pixiv traffic goes directly from the device.
+        buildConfigField("String", "PIXIV_CLIENT_ID", "\"$pixivClientId\"")
+        buildConfigField("String", "PIXIV_CLIENT_SECRET", "\"$pixivClientSecret\"")
+        buildConfigField("String", "PIXIV_WEB_BASE", "\"https://www.pixiv.net\"")
+        buildConfigField("String", "PIXIV_APP_API_BASE", "\"https://app-api.pixiv.net\"")
+        buildConfigField("String", "PIXIV_OAUTH_BASE", "\"https://oauth.secure.pixiv.net\"")
     }
 
     signingConfigs {

@@ -7,51 +7,60 @@ import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import retrofit2.HttpException
 import java.io.IOException
+import pixiviz.mobile.BuildConfig
+import pixiviz.mobile.data.remote.web.GuestSource
 
 /** Errors surfaced to the UI, already classified so screens can message them precisely. */
 sealed class RelayException(message: String, cause: Throwable? = null) : Exception(message, cause) {
-    /** The Worker has no pixiv credential and the device has no token either. */
-    class NoCredential : RelayException("尚未登录 pixiv，也没有可用的服务端凭据")
+    /** Requested something that needs a pixiv account. */
+    class NeedsSignIn : RelayException("这个内容需要登录 pixiv 才能浏览")
 
     /** The stored token was rejected - the UI should send the user back to sign-in. */
     class Unauthorized : RelayException("登录已失效，请重新登录")
-
-    /** Access key rejected by the Worker. */
-    class BadAppKey : RelayException("Worker 访问密钥不正确")
 
     class Http(val code: Int, message: String) : RelayException(message)
 
     class Network(cause: Throwable) : RelayException("网络请求失败：${cause.message}", cause)
 }
 
-/** Ranking modes. `adult` entries are hidden until the NSFW gate is unlocked. */
-data class RankMode(val key: String, val label: String, val adult: Boolean = false)
+/**
+ * Ranking modes for both surfaces.
+ *
+ * `webMode` is the equivalent used by the public web ranking (only needed when browsing
+ * without an account); `requiresLogin` marks modes that answer 403 for guests, which is
+ * every R-18 mode.
+ */
+data class RankMode(
+    val key: String,
+    val label: String,
+    val webMode: String,
+    val adult: Boolean = false,
+)
 
 object RankModes {
     val all: List<RankMode> = listOf(
-        RankMode("day", "日榜"),
-        RankMode("week", "周榜"),
-        RankMode("month", "月榜"),
-        RankMode("day_male", "男性向"),
-        RankMode("day_female", "女性向"),
-        RankMode("week_original", "原创周榜"),
-        RankMode("week_rookie", "新人周榜"),
-        RankMode("day_manga", "漫画日榜"),
-        RankMode("day_ai", "AI 日榜"),
-        RankMode("day_r18", "R18 日榜", adult = true),
-        RankMode("day_male_r18", "R18 男性向", adult = true),
-        RankMode("day_female_r18", "R18 女性向", adult = true),
-        RankMode("week_r18", "R18 周榜", adult = true),
-        RankMode("week_r18g", "R18-G 周榜", adult = true),
-        RankMode("day_r18_ai", "R18-AI 日榜", adult = true),
-        RankMode("day_r18_manga", "R18 漫画日榜", adult = true),
-        RankMode("week_r18_manga", "R18 漫画周榜", adult = true),
+        RankMode("day", "日榜", "daily"),
+        RankMode("week", "周榜", "weekly"),
+        RankMode("month", "月榜", "monthly"),
+        RankMode("day_male", "男性向", "daily_male"),
+        RankMode("day_female", "女性向", "daily_female"),
+        RankMode("week_original", "原创周榜", "weekly_original"),
+        RankMode("week_rookie", "新人周榜", "weekly_rookie"),
+        RankMode("day_manga", "漫画日榜", "daily_manga"),
+        RankMode("day_ai", "AI 日榜", "daily_ai"),
+        RankMode("day_r18", "R18 日榜", "daily_r18", adult = true),
+        RankMode("day_male_r18", "R18 男性向", "male_r18", adult = true),
+        RankMode("day_female_r18", "R18 女性向", "female_r18", adult = true),
+        RankMode("week_r18", "R18 周榜", "weekly_r18", adult = true),
+        RankMode("week_r18g", "R18-G 周榜", "r18g", adult = true),
+        RankMode("day_r18_ai", "R18-AI 日榜", "daily_r18", adult = true),
+        RankMode("day_r18_manga", "R18 漫画日榜", "daily_r18", adult = true),
+        RankMode("week_r18_manga", "R18 漫画周榜", "weekly_r18", adult = true),
     )
 
     fun byKey(key: String): RankMode = all.firstOrNull { it.key == key } ?: all.first()
 }
 
-/** Loader abstraction so one paging source can drive ranking, search and artist grids. */
 fun interface IllustLoader {
     suspend fun load(nextUrl: String?): IllustListResponse
 }
@@ -60,11 +69,7 @@ class IllustPagingSource(private val loader: IllustLoader) : PagingSource<String
 
     override suspend fun load(params: LoadParams<String>): LoadResult<String, Illust> = try {
         val response = loader.load(params.key)
-        LoadResult.Page(
-            data = response.illusts,
-            prevKey = null,
-            nextKey = response.nextUrl,
-        )
+        LoadResult.Page(data = response.illusts, prevKey = null, nextKey = response.nextUrl)
     } catch (e: RelayException) {
         LoadResult.Error(e)
     } catch (e: IOException) {
@@ -74,27 +79,29 @@ class IllustPagingSource(private val loader: IllustLoader) : PagingSource<String
     override fun getRefreshKey(state: PagingState<String, Illust>): String? = null
 }
 
+/**
+ * Single entry point for content. Signed-in traffic goes to app-api (the only surface that
+ * returns R-18); otherwise the public web surface is used, so the app is usable with no
+ * account at all.
+ */
 class PixivRepository(
     private val config: RelayConfig,
     private val api: PixivApi,
+    private val guest: GuestSource,
+    private val signedIn: () -> Boolean,
 ) {
 
-    private fun base(): String = config.baseUrl()
+    private fun appBase(): String = BuildConfig.PIXIV_APP_API_BASE.trimEnd('/')
 
     private fun build(path: String, params: Map<String, String> = emptyMap()): String {
-        if (base().isBlank()) throw RelayException.Http(0, "还没有配置 Worker 地址")
         val query = params.entries
             .filter { it.value.isNotBlank() }
             .joinToString("&") { "${it.key}=${urlEncode(it.value)}" }
-        return if (query.isEmpty()) base() + path else base() + path + "?" + query
+        return if (query.isEmpty()) appBase() + path else appBase() + path + "?" + query
     }
 
-    /** pixiv hands back absolute app-api URLs for the next page; re-point them at the Worker. */
-    private fun rewrite(nextUrl: String): String {
-        val parsed = nextUrl.toHttpUrlOrNull() ?: return nextUrl
-        val query = parsed.encodedQuery
-        return if (query.isNullOrBlank()) base() + parsed.encodedPath else base() + parsed.encodedPath + "?" + query
-    }
+    /** app-api hands back absolute next-page URLs; they already point at the right host. */
+    private fun rewrite(nextUrl: String): String = nextUrl
 
     private suspend fun <T> call(block: suspend () -> T): T = withContext(Dispatchers.IO) {
         try {
@@ -106,54 +113,53 @@ class PixivRepository(
         }
     }
 
-    private suspend fun mapHttp(e: HttpException): RelayException {
-        val code = e.code()
-        val body = runCatching { e.response()?.errorBody()?.string() }.getOrNull().orEmpty()
-        val kind = Regex("\"error\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
-        return when {
-            code == 401 && kind == "no_credential" -> RelayException.NoCredential()
-            code == 401 && kind == "unauthorized" -> RelayException.BadAppKey()
-            code == 401 -> RelayException.Unauthorized()
-            else -> RelayException.Http(code, "HTTP $code")
+    private fun mapHttp(e: HttpException): RelayException = when (e.code()) {
+        401 -> RelayException.Unauthorized()
+        403 -> RelayException.NeedsSignIn()
+        404 -> RelayException.Http(404, "作品不存在或已删除")
+        else -> RelayException.Http(e.code(), "HTTP ${e.code()}")
+    }
+
+    // ---------------------------------------------------------------- loaders
+
+    fun rankLoader(mode: String, date: String? = null): IllustLoader {
+        val rankMode = RankModes.byKey(mode)
+        if (!signedIn()) {
+            if (rankMode.adult) {
+                return IllustLoader { throw RelayException.NeedsSignIn() }
+            }
+            return guest.rankLoader(rankMode.webMode)
+        }
+        return IllustLoader { next ->
+            call {
+                val url = if (next != null) {
+                    rewrite(next)
+                } else {
+                    build(
+                        "/v1/illust/ranking",
+                        buildMap {
+                            put("mode", mode)
+                            put("filter", "for_android")
+                            if (!date.isNullOrBlank()) put("date", date)
+                        },
+                    )
+                }
+                api.illustList(url)
+            }
         }
     }
 
-    fun rankLoader(mode: String, date: String? = null): IllustLoader = IllustLoader { next ->
-        call {
-            val url = if (next != null) {
-                rewrite(next)
-            } else {
-                build(
-                    "/v1/illust/ranking",
-                    buildMap {
-                        put("mode", mode)
-                        put("filter", "for_android")
-                        if (!date.isNullOrBlank()) put("date", date)
-                    },
+    fun recommendedLoader(): IllustLoader {
+        if (!signedIn()) return guest.discoveryLoader()
+        return IllustLoader { next ->
+            call {
+                api.illustList(
+                    next ?: build(
+                        "/v1/illust/recommended",
+                        mapOf("filter" to "for_android", "include_ranking_illusts" to "true"),
+                    ),
                 )
             }
-            api.illustList(url)
-        }
-    }
-
-    fun recommendedLoader(): IllustLoader = IllustLoader { next ->
-        call {
-            val url = next ?: build(
-                "/v1/illust/recommended",
-                mapOf("filter" to "for_android", "include_ranking_illusts" to "true"),
-            )
-            api.illustList(url)
-        }
-    }
-
-    fun relatedLoader(illustId: Long): IllustLoader = IllustLoader { _ ->
-        call {
-            api.illustList(
-                build(
-                    "/v2/illust/related",
-                    mapOf("illust_id" to illustId.toString(), "filter" to "for_android"),
-                ),
-            )
         }
     }
 
@@ -162,66 +168,116 @@ class PixivRepository(
         searchTarget: String = "partial_match_for_tags",
         sort: String = "date_desc",
         duration: String? = null,
-    ): IllustLoader = IllustLoader { next ->
-        call {
-            val url = next ?: build(
-                "/v2/search/illust",
-                buildMap {
-                    put("word", word)
-                    put("search_target", searchTarget)
-                    put("sort", sort)
-                    put("filter", "for_android")
-                    if (!duration.isNullOrBlank()) put("duration", duration)
-                },
-            )
-            api.illustList(url)
+    ): IllustLoader {
+        if (!signedIn()) {
+            val webOrder = if (sort == "popular_desc") "popular_d" else "date_d"
+            return guest.searchLoader(word, mode = "all", order = webOrder)
+        }
+        return IllustLoader { next ->
+            call {
+                val url = next ?: build(
+                    "/v2/search/illust",
+                    buildMap {
+                        put("word", word)
+                        put("search_target", searchTarget)
+                        put("sort", sort)
+                        put("filter", "for_android")
+                        if (!duration.isNullOrBlank()) put("duration", duration)
+                    },
+                )
+                api.illustList(url)
+            }
         }
     }
 
-    fun userIllustsLoader(userId: Long): IllustLoader = IllustLoader { next ->
-        call {
-            val url = next ?: build(
-                "/v1/user/illusts",
-                mapOf("user_id" to userId.toString(), "filter" to "for_android"),
-            )
-            api.illustList(url)
+    fun userIllustsLoader(userId: Long): IllustLoader {
+        if (!signedIn()) return guest.userWorksLoader(userId)
+        return IllustLoader { next ->
+            call {
+                api.illustList(
+                    next ?: build(
+                        "/v1/user/illusts",
+                        mapOf("user_id" to userId.toString(), "filter" to "for_android"),
+                    ),
+                )
+            }
         }
     }
 
-    suspend fun trendingTags(): List<TrendingTag> = call {
-        api.trendingTags(build("/v1/trending-tags/illust", mapOf("filter" to "for_android"))).trendTags
+    fun relatedLoader(illustId: Long): IllustLoader = IllustLoader { _ ->
+        if (!signedIn()) {
+            IllustListResponse(illusts = guest.related(illustId))
+        } else {
+            call {
+                api.illustList(
+                    build(
+                        "/v2/illust/related",
+                        mapOf("illust_id" to illustId.toString(), "filter" to "for_android"),
+                    ),
+                )
+            }
+        }
     }
 
-    suspend fun autocomplete(word: String): List<AutocompleteTag> = call {
-        api.autocomplete(build("/v2/search/autocomplete", mapOf("word" to word))).tags
-    }
+    // ---------------------------------------------------------------- singles
 
-    suspend fun searchUser(word: String): List<UserPreview> = call {
-        api.searchUser(build("/v1/search/user", mapOf("word" to word, "filter" to "for_android")))
-            .userPreviews
-    }
+    suspend fun illustDetail(illustId: Long): Illust =
+        if (signedIn()) {
+            call {
+                api.illustDetail(build("/v1/illust/detail", mapOf("illust_id" to illustId.toString()))).illust
+            }
+        } else {
+            guest.illustDetail(illustId)
+        }
 
-    suspend fun illustDetail(illustId: Long): Illust = call {
-        api.illustDetail(build("/v1/illust/detail", mapOf("illust_id" to illustId.toString()))).illust
-    }
+    suspend fun userDetail(userId: Long): UserDetailResponse =
+        if (signedIn()) {
+            call {
+                api.userDetail(
+                    build("/v1/user/detail", mapOf("user_id" to userId.toString(), "filter" to "for_android")),
+                )
+            }
+        } else {
+            guest.userDetail(userId)
+        }
 
-    suspend fun userDetail(userId: Long): UserDetailResponse = call {
-        api.userDetail(build("/v1/user/detail", mapOf("user_id" to userId.toString(), "filter" to "for_android")))
-    }
+    suspend fun trendingTags(): List<TrendingTag> =
+        if (signedIn()) {
+            call {
+                api.trendingTags(build("/v1/trending-tags/illust", mapOf("filter" to "for_android"))).trendTags
+            }
+        } else {
+            guest.trendingTags()
+        }
+
+    suspend fun autocomplete(word: String): List<AutocompleteTag> =
+        if (signedIn()) {
+            call { api.autocomplete(build("/v2/search/autocomplete", mapOf("word" to word))).tags }
+        } else {
+            guest.autocomplete()
+        }
+
+    suspend fun searchUser(word: String): List<UserPreview> =
+        if (signedIn()) {
+            call {
+                api.searchUser(build("/v1/search/user", mapOf("word" to word, "filter" to "for_android")))
+                    .userPreviews
+            }
+        } else {
+            guest.searchUser()
+        }
+
+    // ---------------------------------------------------------------- helpers
 
     /**
-     * Route an image URL according to the configured channel.
-     * DIRECT keeps i.pximg.net and lets the OkHttp interceptor add the referer;
-     * RELAY sends bytes through the Worker so the device IP never reaches pixiv.
+     * DIRECT keeps i.pximg.net and lets the interceptor add the referer, which is the fastest
+     * path and verified to work from a device. RELAY routes bytes through the Worker when a
+     * user wants their IP hidden from pixiv's CDN.
      */
     fun imageUrl(raw: String, preferOriginal: Boolean = false): String {
-        if (raw.isBlank()) return raw
-        val resolved = if (preferOriginal && raw.contains("img-master")) raw else raw
-        if (!config.imageChannelDirect) {
-            val tail = resolved.substringAfter("://", "").substringAfter('/', "")
-            return base() + "/img/" + tail
-        }
-        return resolved
+        if (raw.isBlank() || config.imageChannelDirect || config.baseUrl().isBlank()) return raw
+        val tail = raw.substringAfter("://", "").substringAfter('/', "")
+        return config.baseUrl() + "/img/" + tail
     }
 
     /** Accepts a pixiv URL or a bare id and returns the id, or null. */

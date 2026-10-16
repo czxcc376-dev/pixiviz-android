@@ -1,6 +1,7 @@
 package pixiviz.mobile
 
 import android.content.Context
+import okhttp3.OkHttpClient
 import pixiviz.mobile.data.auth.AuthRepository
 import pixiviz.mobile.data.auth.SecureTokenStore
 import pixiviz.mobile.data.local.HistoryDao
@@ -9,14 +10,17 @@ import pixiviz.mobile.data.remote.Network
 import pixiviz.mobile.data.remote.PixivJson
 import pixiviz.mobile.data.remote.PixivRepository
 import pixiviz.mobile.data.remote.RelayConfig
+import pixiviz.mobile.data.remote.web.GuestSource
 import pixiviz.mobile.data.settings.ImageChannel
 import pixiviz.mobile.data.settings.Settings
 import pixiviz.mobile.data.settings.SettingsStore
-import okhttp3.OkHttpClient
 
 /**
- * Hand-rolled dependency container (no annotation processor), so the cloud build stays
- * fast and the object graph is obvious.
+ * Hand-rolled dependency container (no annotation processor), so the cloud build stays fast
+ * and the object graph is obvious.
+ *
+ * Note there is no "is it configured" gate any more: the app browses pixiv's public web
+ * surface on its own, and signing in only adds R-18 and personal content.
  */
 class AppContainer(context: Context) {
 
@@ -26,29 +30,30 @@ class AppContainer(context: Context) {
     val config = RelayConfig()
     val tokenStore = SecureTokenStore(appContext)
 
-    private val apiClient: OkHttpClient = Network.apiClient(config)
+    /** One HTTP stack: headers are chosen per upstream host. Coil shares it too. */
+    val httpClient: OkHttpClient = Network.sharedClient(config)
 
-    /** Shared with Coil so images reuse the same referer / app-key handling. */
-    val imageClient: OkHttpClient = Network.imageClient(config)
+    private val appApi = Network.createAppApi(httpClient)
+    private val webApi = Network.createWebApi(httpClient)
 
-    private val api = Network.createApi(apiClient)
+    val guest = GuestSource(webApi)
 
-    val auth = AuthRepository(tokenStore, config, apiClient, PixivJson)
+    val auth = AuthRepository(tokenStore, config, httpClient, PixivJson)
 
-    val repository = PixivRepository(config, api)
+    val repository = PixivRepository(
+        config = config,
+        api = appApi,
+        guest = guest,
+        signedIn = { auth.signedIn.value },
+    )
 
     private val database = PixivizDatabase.build(appContext)
     val history: HistoryDao = database.history()
 
-    /** Pushes persisted preferences into the volatile relay config + auth state. */
+    /** Pushes persisted preferences into the volatile relay config. */
     fun applySettings(settings: Settings) {
-        val url = settings.workerUrl.ifBlank { BuildConfig.DEFAULT_WORKER_URL }
-        val key = settings.appKey.ifBlank { BuildConfig.DEFAULT_APP_KEY }
-        config.workerUrl = url
-        config.appKey = key
+        config.workerUrl = settings.workerUrl.ifBlank { BuildConfig.DEFAULT_WORKER_URL }
+        config.appKey = settings.appKey.ifBlank { BuildConfig.DEFAULT_APP_KEY }
         config.imageChannelDirect = settings.imageChannel == ImageChannel.DIRECT
     }
-
-    fun isConfigured(settings: Settings): Boolean =
-        settings.workerUrl.ifBlank { BuildConfig.DEFAULT_WORKER_URL }.isNotBlank()
 }

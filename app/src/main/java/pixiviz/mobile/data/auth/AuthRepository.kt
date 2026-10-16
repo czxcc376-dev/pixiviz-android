@@ -1,31 +1,32 @@
 package pixiviz.mobile.data.auth
 
+import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
-import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
+import pixiviz.mobile.BuildConfig
 import pixiviz.mobile.data.remote.RelayConfig
 import java.security.MessageDigest
 import java.security.SecureRandom
-import android.util.Base64
 
 /**
- * Device-side pixiv sign-in.
+ * Device-side pixiv sign-in, talking straight to oauth.secure.pixiv.net.
  *
- * The refresh token never leaves the device unsealed, and the OAuth client secret never
- * enters the APK: the authorization-code / refresh exchanges are performed by the Worker
- * through `POST /auth/token`, which is the only place that knows the client credentials.
+ * The Worker cannot be used here: pixiv answers Cloudflare egress with a block page
+ * (\u30d6\u30ed\u30c3\u30af\u3055\u308c\u307e\u3057\u305f). Requests therefore come from the device, which also keeps the
+ * account's traffic pattern normal - relaying through a server is what got pxve-api's
+ * upstream account permanently banned.
+ *
+ * The refresh token stays sealed by the Android Keystore; only short-lived access tokens
+ * ever live in memory.
  */
 class AuthRepository(
     private val tokenStore: SecureTokenStore,
@@ -49,7 +50,7 @@ class AuthRepository(
         return verifier to url
     }
 
-    /** Pulls `code` out of the callback URL the WebView lands on. */
+    /** Pulls `code` out of whatever URL the login flow landed on. */
     fun extractCode(raw: String): String? {
         val text = raw.trim()
         if (text.isEmpty()) return null
@@ -58,12 +59,13 @@ class AuthRepository(
     }
 
     suspend fun exchangeCode(code: String, verifier: String): Result<Unit> = withContext(Dispatchers.IO) {
-        val payload = buildJsonObject {
-            put("grant_type", "authorization_code")
-            put("code", code)
-            put("code_verifier", verifier)
-        }
-        requestToken(payload).map { tokens ->
+        tokenRequest(
+            FormBody.Builder()
+                .add("grant_type", "authorization_code")
+                .add("code", code)
+                .add("code_verifier", verifier)
+                .build(),
+        ).map { tokens ->
             tokens.refreshToken?.let { tokenStore.saveRefreshToken(it) }
             config.accessToken = tokens.accessToken
             _lastError.value = null
@@ -78,15 +80,12 @@ class AuthRepository(
             _signedIn.value = false
             return@withContext false
         }
-        if (config.baseUrl().isBlank()) {
-            _signedIn.value = false
-            return@withContext false
-        }
-        val payload = buildJsonObject {
-            put("grant_type", "refresh_token")
-            put("refresh_token", refreshToken)
-        }
-        val result = requestToken(payload)
+        val result = tokenRequest(
+            FormBody.Builder()
+                .add("grant_type", "refresh_token")
+                .add("refresh_token", refreshToken)
+                .build(),
+        )
         result.fold(
             onSuccess = { tokens ->
                 config.accessToken = tokens.accessToken
@@ -113,28 +112,25 @@ class AuthRepository(
 
     private data class Tokens(val accessToken: String?, val refreshToken: String?)
 
-    private fun requestToken(payload: JsonObject): Result<Tokens> {
-        val base = config.baseUrl()
-        if (base.isBlank()) return Result.failure(IllegalStateException("还没有配置 Worker 地址"))
-        val body = payload.toString().toRequestBody(JSON_MEDIA)
-        val builder = Request.Builder()
-            .url("$base/auth/token")
+    private fun tokenRequest(body: FormBody): Result<Tokens> {
+        val url = BuildConfig.PIXIV_OAUTH_BASE.trimEnd('/') + "/auth/token"
+        val request = Request.Builder()
+            .url(url)
             .post(body)
             .header("Accept", "application/json")
-        if (config.appKey.isNotBlank()) builder.header("X-App-Key", config.appKey)
+            .build()
 
         return runCatching {
-            client.newCall(builder.build()).execute().use { response ->
+            client.newCall(request).execute().use { response ->
                 val text = response.body?.string().orEmpty()
                 val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
                 if (!response.isSuccessful) {
                     val message = root?.get("errors")?.toString()
-                        ?: root?.get("message")?.jsonPrimitive?.content
+                        ?: root?.get("error")?.jsonPrimitive?.content
                         ?: "HTTP ${response.code}"
-                    error(message)
+                    error(if (response.code == 403) "pixiv 拒绝了这次请求，请稍后重试" else message)
                 }
-                val inner = root?.get("response")?.jsonObject
-                    ?: error("响应缺少 response 字段")
+                val inner = root?.get("response")?.jsonObject ?: error("响应缺少 response 字段")
                 Tokens(
                     accessToken = inner["access_token"]?.jsonPrimitive?.content,
                     refreshToken = inner["refresh_token"]?.jsonPrimitive?.content,
@@ -151,8 +147,4 @@ class AuthRepository(
 
     private fun base64Url(bytes: ByteArray): String =
         Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-
-    private companion object {
-        val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
-    }
 }
