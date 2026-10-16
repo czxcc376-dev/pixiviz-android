@@ -1,0 +1,14 @@
+name = "pixiviz-relay"
+main = "src/index.ts"
+compatibility_date = "2024-10-01"
+workers_dev = true
+
+# Secrets are NOT stored here (see README): CLIENT_ID, CLIENT_SECRET,
+# WORKER_ACCESS_KEY, and optionally PIXIV_REFRESH_TOKEN.
+
+[[kv_namespaces]]
+binding = "TOKENS"
+id = "ad6e43346fe744748be97fec0d68945d"
+
+[observability]
+enabled = true

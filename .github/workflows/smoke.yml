@@ -1,0 +1,50 @@
+name: Worker smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe deployed worker
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          APP_KEY: ${{ secrets.WORKER_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          echo "worker: $WORKER_URL"
+
+          echo "--- 1. /health (no auth) ---"
+          curl -sS -m 30 "$WORKER_URL/health"; echo
+
+          echo "--- 2. /v1 without key (expect 401) ---"
+          code=$(curl -sS -m 30 -o /tmp/na -w '%{http_code}' "$WORKER_URL/v1/illust/ranking?mode=day&filter=for_android")
+          echo "http=$code body=$(cat /tmp/na)"
+          test "$code" = "401"
+
+          echo "--- 3. /v1 with key (401 no_credential before sign-in, 200 after) ---"
+          code=$(curl -sS -m 30 -o /tmp/wk -w '%{http_code}' -H "X-App-Key: $APP_KEY" "$WORKER_URL/v1/illust/ranking?mode=day&filter=for_android")
+          echo "http=$code"
+          head -c 500 /tmp/wk; echo
+          case "$code" in
+            200) echo "RESULT: credential present, pixiv answered";;
+            401) echo "RESULT: worker reachable, no pixiv credential configured yet";;
+            *)   echo "RESULT: unexpected status"; exit 1;;
+          esac
+
+          echo "--- 4. /img referer injection (404 = referer accepted, 403 = referer missing) ---"
+          code=$(curl -sS -m 30 -o /dev/null -w '%{http_code}' -H "X-App-Key: $APP_KEY" \
+            "$WORKER_URL/img/c/240x480/img-master/img/2020/01/01/00/00/00/1_p0_master1200.jpg")
+          echo "http=$code"
+          test "$code" != "403"
+
+          echo "--- 5. /tools/token page ---"
+          code=$(curl -sS -m 30 -o /tmp/tp -w '%{http_code}' "$WORKER_URL/tools/token")
+          echo "http=$code bytes=$(wc -c </tmp/tp)"
+          test "$code" = "200"
+
+          echo "ALL SMOKE CHECKS PASSED"

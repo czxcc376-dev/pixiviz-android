@@ -1,0 +1,82 @@
+/**
+ * Self-contained PKCE helper page served at /tools/token.
+ *
+ * It bootstraps a pixiv refresh_token in one of two ways:
+ *   1. paste the code from the callback URL, exchange it here, copy the token;
+ *   2. open this page as /tools/token?k=<WORKER_ACCESS_KEY> and press "写入 Worker"
+ *      so the token never has to be copied by hand.
+ *
+ * The JS below deliberately avoids backticks / ${} so it can live inside this
+ * template literal unescaped.
+ */
+const HTML = [
+  '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">',
+  '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">',
+  '<title>Pixiviz · 获取 refresh_token</title><style>',
+  ':root{color-scheme:dark}',
+  '*{box-sizing:border-box}',
+  'body{margin:0;padding:24px 16px 64px;background:#0b0b0f;color:#eae7f2;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}',
+  '.wrap{max-width:680px;margin:0 auto}',
+  'h1{font-size:26px;margin:0 0 4px;font-weight:650}',
+  '.sub{color:#9c94ad;font-size:13px;margin-bottom:20px}',
+  '.glass{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:18px;margin-bottom:16px;backdrop-filter:blur(18px)}',
+  '.step{font-weight:600;margin:0 0 10px;display:flex;gap:10px;align-items:center}',
+  '.badge{width:22px;height:22px;border-radius:50%;background:#8F77B5;color:#fff;font-size:12px;display:grid;place-items:center;flex:0 0 auto}',
+  'button{appearance:none;border:0;border-radius:999px;padding:11px 20px;font-size:14px;font-weight:600;background:#8F77B5;color:#fff;cursor:pointer}',
+  'button.ghost{background:rgba(255,255,255,.1)}',
+  'button:disabled{opacity:.5;cursor:not-allowed}',
+  'textarea,input{width:100%;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.14);border-radius:14px;color:#eae7f2;padding:12px;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}',
+  'textarea{min-height:78px;resize:vertical}',
+  '.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}',
+  '.hint{color:#9c94ad;font-size:12.5px;margin-top:10px}',
+  '.out{white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;background:rgba(0,0,0,.35);border-radius:14px;padding:12px;margin-top:12px;display:none}',
+  '.ok{color:#75C64C}.err{color:#F98080}',
+  '</style></head><body><div class="wrap">',
+  '<h1>获取 pixiv refresh_token</h1>',
+  '<div class="sub">pixiv 已关闭游客授权，所有接口都需要用户 token。本页只做一次性的授权码交换。</div>',
+  '<div class="glass"><p class="step"><span class="badge">1</span>打开 pixiv 登录页</p>',
+  '<div class="hint">登录成功后浏览器会跳到一个打不开的地址，地址栏里的 <b>code=</b> 后面那串就是要用的授权码。</div>',
+  '<div class="row"><button id="open">打开 pixiv 登录页</button>',
+  '<button id="copyLink" class="ghost">复制登录链接</button></div></div>',
+  '<div class="glass"><p class="step"><span class="badge">2</span>粘贴回调地址或授权码</p>',
+  '<textarea id="code" placeholder="整段粘贴回调 URL 也可以，会自动提取 code"></textarea>',
+  '<div class="row"><button id="exchange">换取 token</button></div>',
+  '<div id="out" class="out"></div></div>',
+  '<div class="glass" id="storeBox" style="display:none"><p class="step"><span class="badge">3</span>写入 Worker</p>',
+  '<div class="hint">把 refresh_token 存进 Worker，之后 App 与网页都无需再登录。</div>',
+  '<div class="row"><button id="store">写入 Worker</button></div></div>',
+  '</div><script>',
+  'var $=function(id){return document.getElementById(id)};',
+  'var params=new URLSearchParams(location.search);',
+  'var appKey=params.get("k")||"";',
+  'if(appKey){$("storeBox").style.display="block"}',
+  'var verifier="";',
+  'function b64url(buf){var b=btoa(String.fromCharCode.apply(null,new Uint8Array(buf)));return b.replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"")}',
+  'function rand(n){var a=new Uint8Array(n);crypto.getRandomValues(a);return b64url(a)}',
+  'async function challenge(v){return b64url(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(v)))}',
+  'async function loginUrl(){verifier=rand(64);var c=await challenge(verifier);',
+  'return "https://app-api.pixiv.net/web/v1/login?code_challenge="+c+"&code_challenge_method=S256&client=pixiv-android"}',
+  '$("open").onclick=async function(){window.open(await loginUrl(),"_blank")};',
+  '$("copyLink").onclick=async function(){var u=await loginUrl();try{await navigator.clipboard.writeText(u);alert("已复制，请在浏览器打开并登录")}catch(e){prompt("手动复制：",u)}};',
+  'function show(msg,cls){var o=$("out");o.style.display="block";o.innerHTML="<span class=\\""+(cls||"")+"\\">"+msg+"</span>"}',
+  'function extractCode(text){text=(text||"").trim();if(!text)return "";var m=text.match(/[?&]code=([^&\\s]+)/);if(m)return m[1];return text}',
+  '$("exchange").onclick=async function(){var code=extractCode($("code").value);if(!code){show("请先粘贴回调地址或授权码","err");return}',
+  'if(!verifier){show("请先点「打开 pixiv 登录页」生成 code_verifier（换一次 token 需重新走一遍第 1 步）","err");return}',
+  'show("请求中…");',
+  'var r=await fetch("/auth/token",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({grant_type:"authorization_code",code:code,code_verifier:verifier})});',
+  'var j=null;try{j=await r.json()}catch(e){show("响应解析失败 HTTP "+r.status,"err");return}',
+  'if(!r.ok||!j||!j.response){show("失败 HTTP "+r.status+"\\n"+JSON.stringify(j),"err");return}',
+  'var t=j.response.refresh_token||"";var u=j.response.user||{};',
+  'show("成功，用户："+(u.name||u.id||"?")+"\\n\\nrefresh_token：\\n"+t,"ok");',
+  'window.__refreshToken=t;try{await navigator.clipboard.writeText(t)}catch(e){}',
+  'if(appKey){}};',
+  '$("store").onclick=async function(){var t=window.__refreshToken;if(!t){show("请先完成第 2 步","err");return}',
+  'show("写入中…");',
+  'var r=await fetch("/admin/token",{method:"POST",headers:{"content-type":"application/json","x-app-key":appKey},body:JSON.stringify({refresh_token:t})});',
+  'var j=null;try{j=await r.json()}catch(e){show("响应解析失败 HTTP "+r.status,"err");return}',
+  'if(!r.ok||!j.ok){show("写入失败 HTTP "+r.status+"\\n"+JSON.stringify(j),"err");return}',
+  'show("已写入 Worker，用户："+((j.user||{}).name||(j.user||{}).id||"?")+"\\n可以关掉本页了。","ok")};',
+  '</script></body></html>',
+].join('');
+
+export const TOKEN_PAGE = HTML;
