@@ -61,12 +61,11 @@ class ImageDownloader(
             update(task) { it.copy(state = DownloadState.RUNNING) }
             val raw = pages[index].let { it.original.ifBlank { it.large.ifBlank { it.medium } } }
             val result = save(resolve(raw), fileName(illust, index + 1, raw))
-            update(task) {
-                result.fold(
-                    onSuccess = { it.copy(state = DownloadState.DONE) },
-                    onFailure = { e -> it.copy(state = DownloadState.FAILED, message = e.message) },
-                )
-            }
+            val finished = result.fold(
+                onSuccess = { task.copy(state = DownloadState.DONE) },
+                onFailure = { e -> task.copy(state = DownloadState.FAILED, message = e.message) },
+            )
+            update(task) { finished }
         }
     }
 

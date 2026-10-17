@@ -320,7 +320,7 @@ class PixivRepository(
      * Bookmarking and following go to app-api with the user's own token; the public relay
      * cannot do them. [restrict] is "public" or "private".
      */
-    suspend fun setBookmark(illustId: Long, bookmarked: Boolean, restrict: String = "public") = call {
+    suspend fun setBookmark(illustId: Long, bookmarked: Boolean, restrict: String = "public"): Result<Unit> = runCatching {
         if (!signedIn()) throw RelayException.NeedsSignIn()
         if (bookmarked) {
             api.postForm(
@@ -332,7 +332,7 @@ class PixivRepository(
         }
     }
 
-    suspend fun setFollow(userId: Long, follow: Boolean) = call {
+    suspend fun setFollow(userId: Long, follow: Boolean): Result<Unit> = runCatching {
         if (!signedIn()) throw RelayException.NeedsSignIn()
         if (follow) {
             api.postForm(

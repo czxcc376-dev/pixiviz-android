@@ -29,6 +29,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import pixiviz.mobile.ui.common.CapsuleButton
+import kotlinx.coroutines.launch
 import pixiviz.mobile.data.remote.UserDetail
 import pixiviz.mobile.data.settings.GridLayout
 import pixiviz.mobile.ui.LocalApp
