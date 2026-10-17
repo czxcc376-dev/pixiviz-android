@@ -81,6 +81,10 @@ class AppContainer(context: Context) {
             config.backendUrls = endpoints
             config.resetBackend()
         }
+        config.imageProxyHosts = settings.imageProxyHosts.ifBlank { BuildConfig.DEFAULT_IMAGE_PROXY }
+            .split(',', '\n')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
         config.workerUrl = settings.workerUrl.ifBlank { BuildConfig.DEFAULT_WORKER_URL }
         config.appKey = settings.appKey.ifBlank { BuildConfig.DEFAULT_APP_KEY }
         config.imageChannelDirect = settings.imageChannel == ImageChannel.DIRECT

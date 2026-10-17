@@ -58,6 +58,7 @@ fun SettingsScreen() {
     var ageDialog by remember { mutableStateOf<NsfwMode?>(null) }
     var showLogin by remember { mutableStateOf(false) }
     var updateInfo by remember { mutableStateOf<String?>(null) }
+    var imageProxy by remember(settings.imageProxyHosts) { mutableStateOf(settings.imageProxyHosts) }
     var backendUrl by remember(settings.backendUrl) { mutableStateOf(settings.backendUrl) }
     var status by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -215,6 +216,9 @@ fun SettingsScreen() {
                     },
                     onSelect = { scope.launch { app.settingsStore.setThemeMode(it) } },
                 )
+                ToggleRow("全屏（隐藏状态栏）", settings.immersiveFullscreen) {
+                    scope.launch { app.settingsStore.setImmersiveFullscreen(it) }
+                }
                 ToggleRow("纯黑模式（OLED）", settings.pureBlack) {
                     scope.launch { app.settingsStore.setPureBlack(it) }
                 }
@@ -228,19 +232,38 @@ fun SettingsScreen() {
         }
 
         item {
-            Section("图片通道") {
+            Section("图片") {
                 Text(
-                    "直连由 App 自带 Referer 访问 i.pximg.net，省 Worker 额度且更快；" +
-                        "走 Worker 会隐藏设备 IP，但消耗每日免费请求。",
+                    "pixiv 的图床 i.pximg.net 在部分网络下完全不可达（实测直连返回 000）。" +
+                        "这里填公共图片反代，多个用逗号或换行分隔，第一个挂了会自动切下一个。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Segmented(
-                    values = ImageChannel.entries.toList(),
-                    selected = settings.imageChannel,
-                    label = { if (it == ImageChannel.DIRECT) "直连" else "走 Worker" },
-                    onSelect = { scope.launch { app.settingsStore.setImageChannel(it) } },
+                OutlinedTextField(
+                    value = imageProxy,
+                    onValueChange = { imageProxy = it },
+                    label = { Text("图片反代地址") },
+                    placeholder = { Text(BuildConfig.DEFAULT_IMAGE_PROXY) },
+                    supportingText = { Text("留空 = 直连 i.pximg.net（仅在能直连时用）") },
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth(),
                 )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CapsuleButton(text = "保存", onClick = {
+                        scope.launch {
+                            app.settingsStore.setImageProxyHosts(imageProxy)
+                            app.applySettings(settings.copy(imageProxyHosts = imageProxy.trim()))
+                            status = "图片反代已保存"
+                        }
+                    })
+                    CapsuleButton(text = "图片体检", selected = false, onClick = {
+                        busy = true
+                        scope.launch {
+                            status = withContext(Dispatchers.IO) { probeImages(app, imageProxy) }
+                            busy = false
+                        }
+                    })
+                }
             }
         }
 
@@ -485,4 +508,33 @@ private fun <T> Segmented(
             )
         }
     }
+}
+
+/** Probes i.pximg.net and every configured proxy with a known-good thumbnail. */
+private fun probeImages(app: pixiviz.mobile.AppContainer, configured: String): String {
+    val path = "/c/540x540_70/img-master/img/2021/09/01/00/00/00/94067980_p0_master1200.jpg"
+    val hosts = configured.ifBlank { BuildConfig.DEFAULT_IMAGE_PROXY }
+        .split(',', '\n').map { it.trim() }.filter { it.isNotBlank() }
+    val report = StringBuilder()
+    report.append("直连 i.pximg.net: ")
+    report.append(
+        runCatching {
+            val request = Request.Builder().url("https://i.pximg.net$path")
+                .header("Referer", "https://www.pixiv.net/").build()
+            app.httpClient.newCall(request).execute().use { "HTTP ${it.code}" }
+        }.getOrElse { "失败：${it.message}" },
+    )
+    hosts.forEach { host ->
+        report.append('\n').append(host).append(": ")
+        report.append(
+            runCatching {
+                val request = Request.Builder().url("https://$host$path").build()
+                app.httpClient.newCall(request).execute().use {
+                    "HTTP ${it.code} ${it.header("Content-Type").orEmpty()}"
+                }
+            }.getOrElse { "失败：${it.message}" },
+        )
+    }
+    if (hosts.isEmpty()) report.append("\n（未配置图片反代）")
+    return report.toString()
 }

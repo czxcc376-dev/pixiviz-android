@@ -25,6 +25,7 @@ enum class GridLayout { SINGLE, DOUBLE }
 data class Settings(
     /** HibiAPI-compatible relay. This is the default data source, and it serves R-18. */
     val backendUrl: String = "",
+    val imageProxyHosts: String = "",
     val workerUrl: String = "",
     val appKey: String = "",
     val nsfwMode: NsfwMode = NsfwMode.BLUR,
@@ -36,6 +37,8 @@ data class Settings(
     val showAiWorks: Boolean = true,
     val lastRankMode: String = "day",
     val searchHistory: List<String> = emptyList(),
+    /** Hide the status bar app-wide (the image viewer is always immersive). */
+    val immersiveFullscreen: Boolean = true,
 )
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "pixiviz_settings")
@@ -51,6 +54,7 @@ class SettingsStore(context: Context) {
     val settings: Flow<Settings> = store.data.map { prefs ->
         Settings(
             backendUrl = prefs[KEY_BACKEND_URL] ?: "",
+            imageProxyHosts = prefs[KEY_IMAGE_PROXY] ?: "",
             workerUrl = prefs[KEY_WORKER_URL] ?: "",
             appKey = prefs[KEY_APP_KEY] ?: "",
             nsfwMode = prefs[KEY_NSFW_MODE].toEnum<NsfwMode>(NsfwMode.BLUR),
@@ -62,8 +66,11 @@ class SettingsStore(context: Context) {
             showAiWorks = prefs[KEY_SHOW_AI] ?: true,
             lastRankMode = prefs[KEY_LAST_RANK] ?: "day",
             searchHistory = prefs[KEY_SEARCH_HISTORY]?.split('\n')?.filter { it.isNotBlank() }.orEmpty(),
+            immersiveFullscreen = prefs[KEY_IMMERSIVE] ?: true,
         )
     }
+
+    suspend fun setImageProxyHosts(value: String) = store.edit { it[KEY_IMAGE_PROXY] = value.trim() }
 
     suspend fun setBackendUrl(value: String) = store.edit { it[KEY_BACKEND_URL] = value.trim() }
     suspend fun setWorkerUrl(value: String) = store.edit { it[KEY_WORKER_URL] = value.trim() }
@@ -76,6 +83,8 @@ class SettingsStore(context: Context) {
     suspend fun setGridLayout(value: GridLayout) = store.edit { it[KEY_GRID_LAYOUT] = value.name }
     suspend fun setShowAiWorks(value: Boolean) = store.edit { it[KEY_SHOW_AI] = value }
     /** Keeps the most recent 20 distinct queries. */
+    suspend fun setImmersiveFullscreen(value: Boolean) = store.edit { it[KEY_IMMERSIVE] = value }
+
     suspend fun addSearchHistory(word: String) {
         val clean = word.trim()
         if (clean.isEmpty()) return
@@ -91,6 +100,7 @@ class SettingsStore(context: Context) {
 
     private companion object {
         val KEY_BACKEND_URL = stringPreferencesKey("backend_url")
+        val KEY_IMAGE_PROXY = stringPreferencesKey("image_proxy_hosts")
         val KEY_WORKER_URL = stringPreferencesKey("worker_url")
         val KEY_APP_KEY = stringPreferencesKey("app_key")
         val KEY_NSFW_MODE = stringPreferencesKey("nsfw_mode")
@@ -102,6 +112,7 @@ class SettingsStore(context: Context) {
         val KEY_SHOW_AI = booleanPreferencesKey("show_ai_works")
         val KEY_LAST_RANK = stringPreferencesKey("last_rank_mode")
         val KEY_SEARCH_HISTORY = stringPreferencesKey("search_history")
+        val KEY_IMMERSIVE = booleanPreferencesKey("immersive_fullscreen")
     }
 }
 

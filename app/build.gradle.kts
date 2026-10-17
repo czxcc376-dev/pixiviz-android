@@ -41,6 +41,9 @@ android {
         buildConfigField("String", "PIXIV_CLIENT_SECRET", "\"$pixivClientSecret\"")
         buildConfigField("String", "PIXIV_WEB_BASE", "\"https://www.pixiv.net\"")
         buildConfigField("String", "DEFAULT_BACKEND_URL", "\"https://hibiapi.cocomi.eu.org/api/pixiv\"")
+        // Public image reverse proxies. pixiv's own CDN is unreachable on some networks
+        // (verified: i.pximg.net returns 000) while these hosts answer 200.
+        buildConfigField("String", "DEFAULT_IMAGE_PROXY", "\"i.pixiv.re,pximg.cocomi.eu.org\"")
         buildConfigField("String", "PIXIV_APP_API_BASE", "\"https://app-api.pixiv.net\"")
         buildConfigField("String", "PIXIV_OAUTH_BASE", "\"https://oauth.secure.pixiv.net\"")
     }

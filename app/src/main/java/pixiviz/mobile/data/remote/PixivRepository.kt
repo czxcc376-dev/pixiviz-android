@@ -352,9 +352,22 @@ class PixivRepository(
      * user wants their IP hidden from pixiv's CDN.
      */
     fun imageUrl(raw: String, preferOriginal: Boolean = false): String {
-        if (raw.isBlank() || config.imageChannelDirect || config.baseUrl().isBlank()) return raw
-        val tail = raw.substringAfter("://", "").substringAfter('/', "")
-        return config.baseUrl() + "/img/" + tail
+        if (raw.isBlank()) return raw
+        // Preferred: a public reverse proxy. pixiv's image CDN is outright unreachable on
+        // some networks, and these hosts serve both thumbnails and full originals.
+        val proxy = config.imageProxyHosts
+            .firstOrNull()
+            ?.substringAfter("://")
+            ?.substringBefore('/')
+            ?.trim()
+        if (!proxy.isNullOrBlank() && raw.contains("i.pximg.net")) {
+            return raw.replace("i.pximg.net", proxy)
+        }
+        if (!config.imageChannelDirect && config.baseUrl().isNotBlank()) {
+            val tail = raw.substringAfter("://", "").substringAfter('/', "")
+            return config.baseUrl() + "/img/" + tail
+        }
+        return raw
     }
 
     /** Accepts a pixiv URL or a bare id and returns the id, or null. */

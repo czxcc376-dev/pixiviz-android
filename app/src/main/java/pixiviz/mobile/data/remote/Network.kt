@@ -38,6 +38,14 @@ class RelayConfig {
     @Volatile var workerUrl: String = ""
     @Volatile var appKey: String = ""
     @Volatile var accessToken: String? = null
+    /**
+     * Public image reverse proxies, in priority order, e.g. i.pixiv.re. When non-empty,
+     * i.pximg.net URLs are rewritten onto the first host and retried against the next one on
+     * failure. Needed because pixiv's image CDN is unreachable on some networks while these
+     * proxies are not. Empty means talk to i.pximg.net directly.
+     */
+    @Volatile var imageProxyHosts: List<String> = emptyList()
+
     @Volatile var imageChannelDirect: Boolean = true
 
     private var index = 0
@@ -146,6 +154,37 @@ private class HostHeadersInterceptor(private val config: RelayConfig) : Intercep
     }
 }
 
+/**
+ * Transparent failover across the configured image proxies: Coil only ever sees the outcome,
+ * so a dead first host costs latency rather than a broken image.
+ */
+private class ImageFailoverInterceptor(private val config: RelayConfig) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        val host = request.url.host
+        val hosts = config.imageProxyHosts
+            .map { it.substringAfter("://").trimEnd('/').substringBefore('/') }
+            .filter { it.isNotBlank() }
+        val isImageRequest = host.endsWith("pximg.net") || hosts.any { it.equals(host, ignoreCase = true) }
+        if (!isImageRequest || hosts.isEmpty()) return chain.proceed(request)
+
+        // Prefer the host already in the URL, then the rest in configured order.
+        val ordered = hosts.sortedByDescending { it.equals(host, ignoreCase = true) }
+        var lastError: IOException? = null
+        for (candidate in ordered) {
+            val url = request.url.newBuilder().host(candidate).build()
+            try {
+                val response = chain.proceed(request.newBuilder().url(url).build())
+                if (response.isSuccessful || response.code == 404 || response.code == 403) return response
+                response.close()
+            } catch (e: IOException) {
+                lastError = e
+            }
+        }
+        throw lastError ?: IOException("所有图片反代都不可用")
+    }
+}
+
 object Network {
 
     fun sharedClient(config: RelayConfig): OkHttpClient = OkHttpClient.Builder()
@@ -153,6 +192,7 @@ object Network {
         .readTimeout(30, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .addInterceptor(HostHeadersInterceptor(config))
+        .addInterceptor(ImageFailoverInterceptor(config))
         .build()
 
     private fun retrofit(client: OkHttpClient): Retrofit = Retrofit.Builder()
